@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BallSim, MAX_SHOT_SPEED, SINK_SPEED } from '../src/game/ball-sim';
-import { BALL_RADIUS, BOARD_DEPTH, BOARD_WIDTH, type HoleLayout } from '../src/game/course';
+import { BallSim, MAX_SHOT_SPEED, SINK_SPEED } from '../src/protos/golf/ball-sim';
+import { BALL_RADIUS, BOARD_DEPTH, BOARD_WIDTH, type HoleLayout } from '../src/protos/golf/course';
 
 const open = (extra: Partial<HoleLayout> = {}): HoleLayout => ({
   index: 0,

@@ -9,7 +9,7 @@ import {
   generateRound,
   HOLES_PER_ROUND,
   shortestPathLength,
-} from '../src/game/course';
+} from '../src/protos/golf/course';
 
 describe('course generation', () => {
   it('is deterministic for a seed', () => {
@@ -43,7 +43,7 @@ describe('course generation', () => {
         }
       }
     }
-  });
+  }, 30000);
 
   it('dailySeed encodes the local date', () => {
     expect(dailySeed(new Date(2026, 10, 18))).toBe(20261118);

@@ -52,6 +52,20 @@ export const Sfx = {
     tone(880, 0.1, 0.12, 0.25);
     tone(1320, 0.2, 0.25, 0.25);
   },
+  click(): void {
+    tone(1200, 0, 0.03, 0.12);
+  },
+  success(): void {
+    tone(523, 0, 0.1, 0.2);
+    tone(659, 0.08, 0.1, 0.2);
+    tone(784, 0.16, 0.18, 0.22);
+  },
+  whoosh(): void {
+    tone(300, 0, 0.18, 0.15, 'sawtooth');
+  },
+  blip(freq = 700): void {
+    tone(freq, 0, 0.05, 0.1);
+  },
   place(): void {
     tone(440, 0, 0.08, 0.2);
     tone(660, 0.07, 0.12, 0.2);

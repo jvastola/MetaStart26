@@ -6,6 +6,8 @@
  * toward the player, and the playfield is centred on the origin.
  */
 
+import { seededRandom } from '../../core/random.js';
+
 export const BOARD_WIDTH = 0.6;
 export const BOARD_DEPTH = 0.38;
 export const BALL_RADIUS = 0.011;
@@ -43,17 +45,7 @@ export interface HoleLayout {
   par: number;
 }
 
-/** mulberry32: small, fast, and the same sequence on every device. */
-export function seededRandom(seed: number): () => number {
-  let state = seed >>> 0;
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+export { seededRandom };
 
 /** Today's course seed, e.g. 20261028. Everyone gets the same course per day. */
 export function dailySeed(date: Date = new Date()): number {
