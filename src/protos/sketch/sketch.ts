@@ -24,17 +24,10 @@ import {
 import { ACCENTS } from '../../core/art.js';
 import { type LabContext, type Prototype, store } from '../../core/context.js';
 import type { HandState } from '../../core/hands.js';
+import { ColorWheel } from '../../core/color-wheel.js';
 import { CanvasPanel } from '../../core/panel.js';
 import { Sfx } from '../../core/sfx.js';
 
-const PALETTE = [
-  { name: 'White', hex: '#f4f5f7' },
-  { name: 'Coral', hex: '#ff7a6b' },
-  { name: 'Sun', hex: '#ffd166' },
-  { name: 'Mint', hex: '#7fe0b5' },
-  { name: 'Sky', hex: '#6fb6ff' },
-  { name: 'Violet', hex: '#c7a6ff' },
-];
 const SIZES = [
   { name: 'Fine', r: 0.0025 },
   { name: 'Medium', r: 0.005 },
@@ -136,7 +129,7 @@ export class SketchPrototype implements Prototype {
   readonly howTo = [
     'Pinch and move to draw; let go to finish the stroke.',
     'Draw with both hands at once if you like.',
-    'Swipe your thumb for colour, tap it to undo.',
+    'Pinch the colour wheel to pick a colour; tap your thumb to undo.',
   ];
   readonly deskRoot = new Group();
   readonly wallRoot = new Group();
@@ -145,7 +138,8 @@ export class SketchPrototype implements Prototype {
   private panel!: CanvasPanel;
   private strokes: Stroke[] = [];
   private live = new Map<HandState, { stroke: Stroke; smooth: Vector3 }>();
-  private color = 3;
+  private wheel!: ColorWheel;
+  private colorHex = '#7fe0b5';
   private size = 1;
   private dirty = false;
   private saveTimer = 0;
@@ -153,12 +147,19 @@ export class SketchPrototype implements Prototype {
 
   init(ctx: LabContext): void {
     this.ctx = ctx;
-    this.panel = new CanvasPanel({ width: 0.4, height: 0.15, columns: 5, buttonHeight: 0.03, accent: this.accent });
+    this.panel = new CanvasPanel({ width: 0.34, height: 0.12, columns: 3, buttonHeight: 0.034, accent: this.accent });
     this.panel.mesh.name = 'SketchPanel';
     this.panel.mesh.position.set(0.33, 0.09, -0.04);
     this.panel.mesh.rotation.set(-0.25, -0.5, 0, 'YXZ');
     this.panel.onPress = (id) => this.onButton(id);
     this.deskRoot.add(this.panel.mesh);
+
+    // Colour wheel on the left of the desk, angled toward you.
+    this.wheel = new ColorWheel(0.15, this.colorHex);
+    this.wheel.mesh.position.set(-0.33, 0.13, -0.02);
+    this.wheel.mesh.rotation.set(-0.2, 0.5, 0, 'YXZ');
+    this.wheel.onChange = (hex) => (this.colorHex = hex);
+    this.deskRoot.add(this.wheel.mesh);
     this.load();
   }
 
@@ -178,10 +179,11 @@ export class SketchPrototype implements Prototype {
   update(dt: number): void {
     this.panel.update(this.ctx.pointers, dt);
     for (const hand of this.ctx.hands.both) {
-      if (hand.gesture === 'right') this.setColor(this.color + 1);
-      if (hand.gesture === 'left') this.setColor(this.color - 1);
+      if (hand.gesture === 'right') this.wheel.cycleRecent(1);
+      if (hand.gesture === 'left') this.wheel.cycleRecent(-1);
       if (hand.gesture === 'tap') this.undo();
     }
+    this.wheel.update(this.ctx.pointers);
     for (const hand of this.ctx.pointers) this.updateHand(hand);
     if (this.saveTimer > 0) {
       this.saveTimer -= dt;
@@ -194,7 +196,8 @@ export class SketchPrototype implements Prototype {
     const live = this.live.get(hand);
     if (!live) {
       if (!hand.tracked || !hand.pinchStarted || this.panel.contains(hand.pinchPoint, 0.06)) return;
-      const stroke = new Stroke(PALETTE[this.color].hex, SIZES[this.size].r);
+      if (this.wheel.active || this.onWheel(hand)) return;
+      const stroke = new Stroke(this.colorHex, SIZES[this.size].r);
       this.deskRoot.add(stroke.group);
       this.strokes.push(stroke);
       const start = this.deskRoot.worldToLocal(this.tmp.copy(hand.pinchPoint));
@@ -245,13 +248,14 @@ export class SketchPrototype implements Prototype {
     Sfx.whoosh();
   }
 
-  private setColor(i: number): void {
-    this.color = (i + PALETTE.length) % PALETTE.length;
-    Sfx.blip(600 + this.color * 60);
+  /** Pinches that land on the colour wheel pick colours instead of drawing. */
+  private onWheel(hand: HandState): boolean {
+    if (hand.isMouse) return false; // the wheel claims mouse drags itself
+    const q = this.wheel.mesh.worldToLocal(this.tmp.copy(hand.pinchPoint));
+    return Math.abs(q.z) < 0.05 && Math.abs(q.x) < 0.09 && Math.abs(q.y) < 0.11;
   }
 
   private onButton(id: string): void {
-    if (id.startsWith('c')) this.setColor(Number(id.slice(1)));
     if (id === 'size') this.size = (this.size + 1) % SIZES.length;
     if (id === 'undo') this.undo();
     if (id === 'clear') this.clear();
@@ -260,14 +264,13 @@ export class SketchPrototype implements Prototype {
   private refresh(): void {
     const points = this.strokes.reduce((a, s) => a + s.points.length, 0);
     this.panel.setText(
-      `Sketch - ${PALETTE[this.color].name}, ${SIZES[this.size].name}`,
+      `Sketch - ${SIZES[this.size].name} brush`,
       '',
       this.ctx.immersive
         ? `Pinch and move to draw. ${this.strokes.length} stroke${this.strokes.length === 1 ? '' : 's'}.`
         : `Drag on the desk to draw. ${this.strokes.length} strokes, ${points} points.`,
     );
     this.panel.setButtons([
-      ...PALETTE.map((c, i) => ({ id: `c${i}`, label: c.name, accent: c.hex, tone: i === this.color ? ('active' as const) : ('default' as const) })),
       { id: 'size', label: SIZES[this.size].name },
       { id: 'undo', label: 'Undo', disabled: this.strokes.length === 0 },
       { id: 'clear', label: 'Clear', disabled: this.strokes.length === 0 },
@@ -303,7 +306,8 @@ export class SketchPrototype implements Prototype {
     return {
       strokes: this.strokes.map((s) => ({ color: s.color, points: s.points.length })),
       drawing: this.live.size,
-      color: PALETTE[this.color].name,
+      color: this.colorHex,
+      wheel: this.wheel.debug(),
       size: SIZES[this.size].name,
     };
   }
@@ -311,5 +315,11 @@ export class SketchPrototype implements Prototype {
   debugActions = {
     press: (id: string) => this.panel.press(id),
     clear: () => this.clear(),
+    wheelWorld: (x: number, y: number) => {
+      const p = this.wheel.worldAt(x, y);
+      this.wheel.mesh.updateMatrixWorld(true);
+      const n = new Vector3(0, 0, 1).transformDirection(this.wheel.mesh.matrixWorld);
+      return { x: p.x, y: p.y, z: p.z, nx: n.x, ny: n.y, nz: n.z };
+    },
   };
 }

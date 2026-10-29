@@ -11,6 +11,7 @@
 import type { Group, PerspectiveCamera, Scene, Vector3, WebGLRenderer, World } from '@iwsdk/core';
 import type { Album } from './camera-frame.js';
 import type { HandState, Hands } from './hands.js';
+import type { KeyboardRequest } from './keyboard.js';
 
 export interface LabContext {
   readonly world: World;
@@ -38,6 +39,8 @@ export interface LabContext {
   goHome(): void;
   /** Shots taken anywhere in the lab. */
   readonly album: Album;
+  /** Open the desk keyboard (with mic) for text entry. */
+  openKeyboard(request: KeyboardRequest): void;
   /** Render a shot from `eye` toward `target` into the album; returns its caption. */
   capture(eye: Vector3, target: Vector3, fov: number): string;
 }

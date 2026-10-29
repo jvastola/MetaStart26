@@ -98,6 +98,7 @@ export class ConjurePrototype implements Prototype {
   private voice = new Voice();
   private heard = '';
   private status = '';
+  private chat: { who: 'You' | 'Conjure'; text: string }[] = [];
   private provider: Source = 'sketch';
   private generating: { item: Item; progress: number; token: number } | null = null;
   private token = 0;
@@ -147,6 +148,15 @@ export class ConjurePrototype implements Prototype {
   }
 
   // ------------------------------------------------------------ intents
+
+  /** Chat entry point: what the user typed or said, and Conjure's reply. */
+  ask(text: string): void {
+    this.chat.push({ who: 'You', text });
+    this.run(text);
+    this.chat.push({ who: 'Conjure', text: this.status || 'Done.' });
+    this.chat = this.chat.slice(-4);
+    this.refresh();
+  }
 
   run(text: string): void {
     const intent = parseIntent(text);
@@ -406,7 +416,13 @@ export class ConjurePrototype implements Prototype {
     if (id === 'speak') this.toggleVoice();
     if (id === 'again') this.run('another one');
     if (id === 'provider') this.cycleProvider();
-    if (id === 'home') this.ctx.goHome();
+    if (id === 'type') {
+      this.ctx.openKeyboard({
+        title: 'Ask Conjure',
+        placeholder: 'e.g. "a tiny castle", "make it blue", "bigger" - or press Mic',
+        onSubmit: (text) => this.ask(text),
+      });
+    }
   }
 
   private toggleVoice(): void {
@@ -418,7 +434,7 @@ export class ConjurePrototype implements Prototype {
       onPartial: (t) => (this.heard = t),
       onFinal: (t) => {
         this.heard = '';
-        if (t) this.run(t);
+        if (t) this.ask(t);
       },
       onError: (e) => {
         this.heard = '';
@@ -446,17 +462,21 @@ export class ConjurePrototype implements Prototype {
     let body = this.status;
     if (this.voice.listening) body = `Listening: ${this.heard || '...'}`;
     else if (this.generating) body = `${this.status} ${Math.round(this.generating.progress * 100)}%`;
+    // Recent conversation, newest last, then the live status.
+    const log = this.chat.slice(-3).map((m) => `${m.who}: ${m.text}`);
+    const live = this.voice.listening || this.generating ? [body] : log.length ? [] : [body];
     this.panel.setText(`Conjure - ${this.provider === 'sketch' ? 'offline sketch' : `AI: ${this.provider}`}`, '', [
-      body,
-      this.ctx.immersive ? 'Try: "make it blue", "bigger", "another one". Pinch to move, both hands to scale.' : 'Drag creations around the desk.',
+      ...log,
+      ...live,
+      ...(log.length ? [] : [this.ctx.immersive ? 'Type or say "make it blue", "bigger", "another one". Turn your wrist to turn what you hold.' : 'Drag creations around the desk.']),
     ]);
     const ideas = this.ideas();
     this.panel.setButtons([
       ...ideas.map((idea, i) => ({ id: `idea${i}`, label: idea })),
-      { id: 'speak', label: this.voice.listening ? 'Stop' : 'Speak', tone: this.voice.listening ? ('active' as const) : ('primary' as const) },
+      { id: 'speak', label: this.voice.listening ? 'Stop' : 'Speak', tone: this.voice.listening ? ('active' as const) : ('default' as const) },
       { id: 'again', label: 'Another', disabled: this.items.length === 0 },
       { id: 'provider', label: this.provider === 'sketch' ? 'AI: off' : `AI: ${this.provider}` },
-      { id: 'home', label: 'Lab menu' },
+      { id: 'type', label: 'Type', tone: 'primary' as const },
     ]);
   }
 
@@ -467,12 +487,13 @@ export class ConjurePrototype implements Prototype {
       items: this.items.map((i) => ({ prompt: i.prompt, recipe: i.recipe, source: i.source, free: i.free, scale: +i.holder.scale.x.toFixed(2), yaw: +i.holder.rotation.y.toFixed(2), pitch: +i.holder.rotation.x.toFixed(2), children: i.content.children.length })),
       provider: this.provider,
       status: this.status,
+      chat: this.chat.map((m) => `${m.who}: ${m.text}`),
       holding: this.holds.length,
     };
   }
 
   debugActions = {
-    say: (text: string) => this.run(text),
+    say: (text: string) => this.ask(text),
     press: (id: string) => this.panel.press(id),
     itemWorld: (index: number) => {
       const item = this.items[index];

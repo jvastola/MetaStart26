@@ -32,6 +32,8 @@ export interface PanelButton {
   disabled?: boolean;
   /** Colour stripe on the button's left edge. */
   accent?: string;
+  /** How many grid columns the button spans (default 1). */
+  span?: number;
 }
 
 export interface PanelOptions {
@@ -43,6 +45,8 @@ export interface PanelOptions {
   /** Height of one button row in metres. */
   buttonHeight?: number;
   accent?: string;
+  /** Seconds before the panel accepts another press (lower for keyboards). */
+  pressCooldown?: number;
 }
 
 export const THEME = {
@@ -93,6 +97,7 @@ export class CanvasPanel {
   private flash = -1;
   private flashTime = 0;
   private cooldown = 0;
+  private lastPressed = -1;
   private readonly lastDepth = { left: 1, right: 1 };
   private readonly local = new Vector3();
 
@@ -102,6 +107,7 @@ export class CanvasPanel {
       columns: 3,
       buttonHeight: 0.04,
       accent: THEME.accent,
+      pressCooldown: PRESS_COOLDOWN,
       ...options,
     };
     this.w = Math.round(this.opts.width * this.opts.ppm);
@@ -156,7 +162,7 @@ export class CanvasPanel {
       buttons.length === this.buttons.length &&
       buttons.every((b, i) => {
         const o = this.buttons[i];
-        return o.id === b.id && o.label === b.label && o.tone === b.tone && o.sub === b.sub && o.disabled === b.disabled && o.accent === b.accent;
+        return o.id === b.id && o.label === b.label && o.tone === b.tone && o.sub === b.sub && o.disabled === b.disabled && o.accent === b.accent && o.span === b.span;
       });
     if (same) return;
     this.buttons = buttons;
@@ -246,10 +252,12 @@ export class CanvasPanel {
   }
 
   private tryPress(index: number): void {
-    if (this.cooldown > 0) return;
+    // Debounce per button: a different button can be pressed right away.
+    if (this.cooldown > 0 && index === this.lastPressed) return;
+    this.lastPressed = index;
     const button = this.buttons[index];
     if (!button || button.disabled) return;
-    this.cooldown = PRESS_COOLDOWN;
+    this.cooldown = this.opts.pressCooldown;
     this.press(button.id);
   }
 
@@ -291,18 +299,36 @@ export class CanvasPanel {
     const pad = 0.012 * ppm;
     const gap = 0.006 * ppm;
     const bh = buttonHeight * ppm;
-    const rows = Math.ceil(this.buttons.length / columns);
     const bw = (this.w - pad * 2 - gap * (columns - 1)) / columns;
-    const top = this.h - pad - rows * bh - (rows - 1) * gap;
-    this.rects = this.buttons.map((_, i) => {
-      const r = Math.floor(i / columns);
-      const c = i % columns;
-      // Centre a short last row.
-      const inRow = Math.min(columns, this.buttons.length - r * columns);
-      const offset = ((columns - inRow) * (bw + gap)) / 2;
-      return { x: pad + offset + c * (bw + gap), y: top + r * (bh + gap), w: bw, h: bh };
+    // Flow buttons into rows, honouring spans.
+    const rows: { button: number; col: number; span: number }[][] = [[]];
+    let col = 0;
+    this.buttons.forEach((b, i) => {
+      const span = Math.min(columns, Math.max(1, b.span ?? 1));
+      if (col + span > columns) {
+        rows.push([]);
+        col = 0;
+      }
+      rows[rows.length - 1].push({ button: i, col, span });
+      col += span;
     });
-    return { x: pad, y: 0, w: this.w - pad * 2, h: rows > 0 ? top - gap : this.h - pad };
+    const rowCount = this.buttons.length ? rows.length : 0;
+    const top = this.h - pad - rowCount * bh - (rowCount - 1) * gap;
+    this.rects = new Array(this.buttons.length);
+    rows.forEach((row, r) => {
+      // Centre a short row.
+      const used = row.reduce((a, c) => a + c.span, 0);
+      const offset = ((columns - used) * (bw + gap)) / 2;
+      for (const cell of row) {
+        this.rects[cell.button] = {
+          x: pad + offset + cell.col * (bw + gap),
+          y: top + r * (bh + gap),
+          w: cell.span * bw + (cell.span - 1) * gap,
+          h: bh,
+        };
+      }
+    });
+    return { x: pad, y: 0, w: this.w - pad * 2, h: rowCount > 0 ? top - gap : this.h - pad };
   }
 
   private redraw(): void {

@@ -13,10 +13,10 @@ division.
 | # | Prototype | Track | One-line pitch |
 |---|---|---|---|
 | 1 | **Desk Focus** | Productivity | A daily planner on your real desk, all within reach: pinch cards off a desk planner, twist a timer, drop them in Done, grow a streak plant. A glance display on the wall shows the timer and progress. |
-| 2 | **Conjure** | Productivity / creative (Agentic) | Say what you want and it appears on your desk. Instant offline sketch, optionally upgraded by Meshy or Tripo. |
+| 2 | **Conjure** | Productivity / creative (Agentic) | Say or type what you want and it appears on your desk; a chat log keeps the back-and-forth. Instant offline sketch, optionally upgraded by Meshy or Tripo. |
 | 3 | **Shot Board** | Productivity / creative | Storyboard a scene on your desk. Frame shots with both hands like a director, anywhere in the lab; they collect on the board. |
 | 4 | **Clay** | Productivity / creative | Sculpt with your bare fingertips on a turntable; export to OBJ. |
-| 5 | **Sketch** | Productivity / creative | Pinch to draw in the air with either hand or both; colours, sizes, undo, autosave. |
+| 5 | **Sketch** | Productivity / creative | Pinch to draw in the air with either hand or both; colour wheel with recent colours, sizes, undo, autosave. |
 | 6 | **Desk Links** | Gaming (reference) | Fingertip mini golf on your desk, kept for comparing hand mechanics. |
 
 ## Run it
@@ -86,6 +86,9 @@ interaction is **direct touch**, not rays:
 | Pinch with both hands on one object | Scale and turn it (Conjure) |
 | Pinch with both hands close together, then pull apart | Frame a camera shot, in any app; let go to capture it to the album |
 | Pinch a dial or rim and move around it | Twist it (timer, turntable) |
+| Pinch the bar on the front edge of the desk mat | Move the whole workspace; turn your wrist to turn it. It stays there next time |
+| Pinch (or touch) the colour wheel and drag | Ring = hue, inner square = saturation and brightness; recent colours underneath (Sketch, Clay) |
+| Poke keys on the desk keyboard | Type; **Mic** dictates. Opens from Desk Focus **New card** and Conjure **Type** |
 | Turn your left palm toward your face | Wrist menu: Home, Move desk, How to, Sound |
 | Thumb microgestures (thumb tap, swipe on the index finger) | Shortcuts: start/pause, next card, undo, bigger/smaller, rotate |
 
@@ -200,6 +203,8 @@ src/protos/sketch/       Sketch (pinch-to-draw strokes)
 src/core/grab.ts         hand-rotation hold used by every pickable object
 src/core/camera-frame.ts two-hand frame gesture and the shared shot album
 src/core/settings-ui.ts  page Settings dialog (AI keys)
+src/core/color-wheel.ts  pinchable colour wheel (color.ts: tested HSV maths)
+src/core/keyboard.ts     desk keyboard with mic dictation
 src/protos/golf/         Desk Links
 api/gen3d.ts             Meshy/Tripo proxy (Vercel function)
 tests/                   unit tests for the pure modules

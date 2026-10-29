@@ -13,10 +13,12 @@
 
 import {
   createSystem,
+  CylinderGeometry,
   type Entity,
   Group,
   Mesh,
   MeshBasicMaterial,
+  MeshStandardMaterial,
   PlaneGeometry,
   RingGeometry,
   Vector3,
@@ -27,8 +29,10 @@ import {
 import { DeskMat, HandCursor, HandSkeleton } from './core/art.js';
 import { Album, FrameCamera } from './core/camera-frame.js';
 import { openSettings } from './core/settings-ui.js';
+import { VirtualKeyboard } from './core/keyboard.js';
 import { type LabContext, type Prototype, store } from './core/context.js';
-import { HandState, Hands } from './core/hands.js';
+import { HeldPose } from './core/grab.js';
+import { HandState, Hands, pointerDistance } from './core/hands.js';
 import { CanvasPanel } from './core/panel.js';
 import { Sfx } from './core/sfx.js';
 import { findDesk, findWall, type SurfacePose, surfaceBelow } from './core/surfaces.js';
@@ -42,12 +46,18 @@ import { ShotBoardPrototype } from './protos/shotboard/shotboard.js';
 import { SketchPrototype } from './protos/sketch/sketch.js';
 
 const DESKTOP_DESK = new Vector3(0, 0.75, -0.5);
+/** Desk grab bar: half length and position in desk space (front edge of the mat). */
+const BAR_HALF = 0.12;
+const BAR_Y = 0.012;
+const BAR_Z = 0.235;
 const DESK_KEY = 'lab-desk-v1';
 type Setup = 'auto' | 'manual' | 'ready';
 
 interface SavedPose {
   desk: [number, number, number, number];
   wall: [number, number, number, number];
+  /** True when the wall frame sits on a detected wall (it then stays put when the desk moves). */
+  realWall?: boolean;
 }
 
 export class LabSystem extends createSystem({
@@ -55,6 +65,11 @@ export class LabSystem extends createSystem({
 }) {
   private ctx!: LabContext & { immersive: boolean; time: number; pointers: readonly HandState[]; wristMenuOpen: boolean };
   private mat!: DeskMat;
+  private deskBar!: Mesh;
+  private keyboard = new VirtualKeyboard();
+  private deskGrab: { hand: HandState; pose: HeldPose } | null = null;
+  private realWall = false;
+  private readonly barScratch = new Vector3();
   private album = new Album();
   private frame!: FrameCamera;
   private cursors: HandCursor[] = [];
@@ -134,6 +149,7 @@ export class LabSystem extends createSystem({
       goHome: () => this.go('hub'),
       album: this.album,
       capture: (eye: Vector3, target: Vector3, fov: number) => this.shoot(eye, target, fov),
+      openKeyboard: (request) => this.keyboard.open(request),
     };
     this.frame = new FrameCamera(this.renderer, this.scene, this.album);
     this.world.createTransformEntity(this.frame.line);
@@ -190,6 +206,7 @@ export class LabSystem extends createSystem({
   go(id: string): void {
     const next = this.protos.find((p) => p.id === id);
     if (!next || next === this.active) return;
+    if (this.keyboard.isOpen) this.keyboard.close(false);
     if (this.active) {
       this.active.exit();
       this.active.deskRoot.visible = false;
@@ -354,18 +371,14 @@ export class LabSystem extends createSystem({
     // Only use a real wall within arm's reach; otherwise stand the board behind the desk.
     const wallFound = findWall(planes, this.head, worldPos, this.foundWall);
     const wallReach = Math.hypot(this.foundWall.position.x - this.head.x, this.foundWall.position.z - this.head.z);
-    if (wallFound && wallReach < 1.1) {
+    this.realWall = wallFound && wallReach < 1.1;
+    if (this.realWall) {
       const w = this.room.worldToLocal(this.tmp2.copy(this.foundWall.position));
       this.setPose(this.wall, w, this.foundWall.yaw - roomYawAngle);
     } else {
-      this.tmp2.set(0, 0.36, -0.36);
-      this.deskToRoom(this.tmp2);
-      this.setPose(this.wall, this.tmp2, this.desk.rotation.y);
+      this.placeDefaultWall();
     }
-    store.set(DESK_KEY, {
-      desk: [this.desk.position.x, this.desk.position.y, this.desk.position.z, this.desk.rotation.y],
-      wall: [this.wall.position.x, this.wall.position.y, this.wall.position.z, this.wall.rotation.y],
-    } satisfies SavedPose);
+    this.saveDesk();
     this.setup = 'ready';
     this.moving = false;
     this.ghost.visible = false;
@@ -381,6 +394,76 @@ export class LabSystem extends createSystem({
     const [wx, wy, wz, wyaw] = saved.wall;
     this.setPose(this.desk, this.tmp.set(dx, dy, dz), dyaw);
     this.setPose(this.wall, this.tmp.set(wx, wy, wz), wyaw);
+    this.realWall = saved.realWall ?? false;
+  }
+
+  private saveDesk(): void {
+    store.set(DESK_KEY, {
+      desk: [this.desk.position.x, this.desk.position.y, this.desk.position.z, this.desk.rotation.y],
+      wall: [this.wall.position.x, this.wall.position.y, this.wall.position.z, this.wall.rotation.y],
+      realWall: this.realWall,
+    } satisfies SavedPose);
+  }
+
+  /** The board stands 36 cm behind and above the desk when no real wall is in reach. */
+  private placeDefaultWall(): void {
+    this.tmp2.set(0, 0.36, -0.36);
+    this.deskToRoom(this.tmp2);
+    this.setPose(this.wall, this.tmp2, this.desk.rotation.y);
+  }
+
+  // ------------------------------------------------------------ desk grab bar
+
+  /**
+   * Pinch the bar on the front edge of the desk mat to move the whole
+   * workspace: it follows your hand and turns with your wrist. The pinch is
+   * consumed so the app underneath does not also react to it.
+   */
+  private updateDeskGrab(): void {
+    const bar = this.deskBar;
+    const mat = bar.material as MeshStandardMaterial;
+    if (this.deskGrab == null) {
+      let near = Infinity;
+      for (const p of this.ctx.pointers) {
+        if (!p.tracked) continue;
+        const d = this.barDistance(p);
+        near = Math.min(near, d);
+        if (p.pinchStarted && d < 0.035) {
+          const pose = new HeldPose();
+          pose.begin(p, this.desk, { upright: true });
+          this.deskGrab = { hand: p, pose };
+          p.clearEdges();
+          Sfx.pinch(p.isMouse ? undefined : p.pinchPoint);
+          break;
+        }
+      }
+      mat.emissiveIntensity = near < 0.08 ? 0.35 + (1 - near / 0.08) * 0.5 : 0.15;
+      return;
+    }
+    const { hand, pose } = this.deskGrab;
+    mat.emissiveIntensity = 1;
+    if (!hand.pinching || !hand.tracked) {
+      this.deskGrab = null;
+      this.saveDesk();
+      Sfx.place(this.desk.getWorldPosition(this.tmp));
+      this.toast('Desk moved. It will stay here next time.');
+      return;
+    }
+    pose.apply(hand, this.desk, { upright: true });
+    this.desk.updateMatrixWorld(true);
+    if (!this.realWall) this.placeDefaultWall();
+  }
+
+  /** Distance from a pointer to the grab bar (ray distance for the mouse). */
+  private barDistance(p: HandState): number {
+    this.desk.updateMatrixWorld(true);
+    const a = this.desk.localToWorld(this.tmp.set(-BAR_HALF, BAR_Y, BAR_Z));
+    const b = this.desk.localToWorld(this.tmp2.set(BAR_HALF, BAR_Y, BAR_Z));
+    const ab = b.sub(a);
+    const point = p.isMouse ? p.pinchPoint : p.pinchPoint;
+    const t = Math.min(1, Math.max(0, this.barScratch.copy(point).sub(a).dot(ab) / ab.lengthSq()));
+    const closest = this.barScratch.copy(a).addScaledVector(ab, t);
+    return pointerDistance(p, closest);
   }
 
   private setPose(group: Group, position: Vector3, yaw: number): void {
@@ -423,10 +506,17 @@ export class LabSystem extends createSystem({
       this.updateSetup(Math.min(delta, 1));
       return;
     }
+    if (this.keyboard.isOpen) {
+      // The keyboard has the user's attention: pause the app underneath.
+      this.updateWristMenu(dt);
+      this.keyboard.update(this.ctx.pointers, dt);
+      return;
+    }
+    this.updateDeskGrab();
     this.updateWristMenu(dt);
     this.updateCoach(dt);
     // The director's frame works in every prototype, unless it owns the pinches.
-    const frameEnabled = this.ctx.immersive && !this.wristOpen && !(this.active?.holding?.() ?? false);
+    const frameEnabled = this.ctx.immersive && !this.wristOpen && this.deskGrab == null && !(this.active?.holding?.() ?? false);
     const caption = this.frame.update(this.hands.left, this.hands.right, this.head, frameEnabled, dt);
     if (caption) this.afterShot(caption);
     this.active?.update(dt);
@@ -559,6 +649,21 @@ export class LabSystem extends createSystem({
 
     this.mat = new DeskMat();
     this.desk.add(this.mat.mesh);
+    // Grab bar on the front edge of the mat: pinch it to move the workspace.
+    this.deskBar = new Mesh(
+      new CylinderGeometry(0.0075, 0.0075, BAR_HALF * 2, 20),
+      new MeshStandardMaterial({ color: '#dfe6f0', roughness: 0.35, emissive: '#9fc7ff', emissiveIntensity: 0.15 }),
+    );
+    this.deskBar.rotation.z = Math.PI / 2;
+    this.deskBar.position.set(0, BAR_Y, BAR_Z);
+    this.deskBar.name = 'DeskGrabBar';
+    this.deskBar.userData.hideInShots = true;
+    this.desk.add(this.deskBar);
+    // Keyboard lies tilted over the front of the desk, like a laptop's.
+    this.keyboard.group.position.set(0, 0.07, 0.1);
+    this.keyboard.group.rotation.x = -0.95;
+    this.keyboard.group.userData.hideInShots = true;
+    this.desk.add(this.keyboard.group);
     this.cursors = [new HandCursor(), new HandCursor()];
     for (const c of this.cursors) chrome.add(c.group);
     // ?skeleton=1 draws procedural hands (recordings, emulator without hand models).
@@ -605,6 +710,16 @@ export class LabSystem extends createSystem({
       this.mouseUpPending = true;
     };
     const key = (e: KeyboardEvent): void => {
+      if (this.keyboard.isOpen) {
+        if (document.querySelector('.lab-settings')) return;
+        const named: Record<string, string> = { Enter: 'enter', Escape: 'cancel', Backspace: 'del' };
+        if (named[e.key]) this.keyboard.key(named[e.key]);
+        else if (e.key === ' ') this.keyboard.key('space');
+        else if (e.key.length === 1) this.keyboard.typeChar(e.key);
+        e.preventDefault();
+        return;
+      }
+      if (document.querySelector('.lab-settings')) return;
       const n = Number.parseInt(e.key, 10);
       if (Number.isInteger(n) && this.protos[n]) this.go(this.protos[n].id);
     };
@@ -736,6 +851,13 @@ export class LabSystem extends createSystem({
       wrist: () => this.ctx.wristMenuOpen,
       shots: () => this.album.shots.map((s) => s.caption),
       framing: () => this.frame.active,
+      keyboard: () => (this.keyboard.isOpen ? this.keyboard.value : null),
+      keyWorld: (id: string) => this.keyboard.keyWorld(id),
+      deskBar: () => {
+        const p = this.desk.localToWorld(new Vector3(0, BAR_Y, BAR_Z));
+        return { x: p.x, y: p.y, z: p.z };
+      },
+      deskPose: () => ({ x: +this.desk.position.x.toFixed(3), z: +this.desk.position.z.toFixed(3), yaw: +this.desk.rotation.y.toFixed(2) }),
       button: (id: string) => {
         for (const panel of CanvasPanel.all) {
           const p = panel.buttonWorld(id);

@@ -26,6 +26,7 @@ import {
 import { type LabContext, type Prototype, store } from '../../core/context.js';
 import { ACCENTS, blobShadow } from '../../core/art.js';
 import type { HandState } from '../../core/hands.js';
+import { ColorWheel } from '../../core/color-wheel.js';
 import { CanvasPanel } from '../../core/panel.js';
 import { Sfx } from '../../core/sfx.js';
 import {
@@ -52,7 +53,8 @@ const PULL_RADIUS = 0.028;
 const CLAY_Y = 0.08;
 const TABLE_R = 0.1;
 const SAVE_KEY = 'clay-sculpt-v1';
-const PALETTE = ['#c98b62', '#9db4c9', '#e6d6b8', '#7aa37a', '#d77a7a', '#5c5f66'];
+const CLAY_COLOR = '#c98b62';
+const COLOR_KEY = 'clay-color-v1';
 
 export class ClayPrototype implements Prototype {
   readonly id = 'clay';
@@ -79,7 +81,7 @@ export class ClayPrototype implements Prototype {
   private material!: MeshStandardMaterial;
   private tool: Tool = 'sculpt';
   private mirror = true;
-  private colorIndex = 0;
+  private wheel!: ColorWheel;
   private dirty = false;
   private saveTimer = 0;
   private undo: Float32Array[] = [];
@@ -115,7 +117,8 @@ export class ClayPrototype implements Prototype {
     this.geometry.computeVertexNormals();
     this.neighbors = buildNeighbors(sphere.indices, this.positions.length / 3);
     this.mirrorMap = buildMirror(this.rest);
-    this.material = new MeshStandardMaterial({ color: new Color(PALETTE[0]), roughness: 0.85 });
+    const savedColor = store.get<string>(COLOR_KEY, CLAY_COLOR);
+    this.material = new MeshStandardMaterial({ color: new Color(savedColor), roughness: 0.85 });
     this.clay = new Mesh(this.geometry, this.material);
     this.clay.name = 'Clay';
     this.clay.position.y = CLAY_Y;
@@ -129,6 +132,13 @@ export class ClayPrototype implements Prototype {
     this.panel.mesh.rotation.set(-0.25, -0.5, 0, 'YXZ');
     this.panel.onPress = (id) => this.onButton(id);
     this.deskRoot.add(this.panel.mesh);
+
+    // Colour wheel on the left: pinch to tint the clay.
+    this.wheel = new ColorWheel(0.14, savedColor);
+    this.wheel.mesh.position.set(-0.3, 0.13, 0);
+    this.wheel.mesh.rotation.set(-0.2, 0.5, 0, 'YXZ');
+    this.wheel.onChange = (hex) => this.setColor(hex);
+    this.deskRoot.add(this.wheel.mesh);
   }
 
   enter(): void {
@@ -141,12 +151,18 @@ export class ClayPrototype implements Prototype {
     this.save();
   }
 
+  private setColor(hex: string): void {
+    this.material.color.set(hex);
+    store.set(COLOR_KEY, hex);
+  }
+
   holding(): boolean {
-    return this.pulls.length > 0 || this.spin != null || this.touching;
+    return this.pulls.length > 0 || this.spin != null || this.touching || this.wheel.active;
   }
 
   update(dt: number): void {
     this.panel.update(this.ctx.pointers, dt);
+    this.wheel.update(this.ctx.pointers);
     this.updateGestures();
     this.updateSpin();
     if (this.ctx.immersive) this.updateHands();
@@ -361,8 +377,8 @@ export class ClayPrototype implements Prototype {
       this.dirty = true;
     }
     if (id === 'color') {
-      this.colorIndex = (this.colorIndex + 1) % PALETTE.length;
-      this.material.color.set(PALETTE[this.colorIndex]);
+      this.wheel.set(CLAY_COLOR);
+      this.setColor(CLAY_COLOR);
     }
     if (id === 'export') this.exportObj();
     if (id === 'home') this.ctx.goHome();
@@ -399,7 +415,7 @@ export class ClayPrototype implements Prototype {
       { id: 'smooth', label: 'Smooth', tone: this.tool === 'smooth' ? 'active' : 'default' },
       { id: 'inflate', label: 'Inflate', tone: this.tool === 'inflate' ? 'active' : 'default' },
       { id: 'mirror', label: this.mirror ? 'Mirror on' : 'Mirror off', tone: this.mirror ? 'active' : 'default' },
-      { id: 'color', label: 'Colour' },
+      { id: 'color', label: 'Clay colour' },
       { id: 'undo', label: 'Undo', disabled: this.undo.length === 0 },
       { id: 'reset', label: 'Reset' },
       { id: 'export', label: 'Export' },
