@@ -34,6 +34,8 @@ export type Intent =
   | { kind: 'clear' }
   | { kind: 'none' };
 
+const EDIT_WORDS = new Set(['bigger', 'larger', 'huge', 'grow', 'smaller', 'tiny', 'shrink', 'little', 'much', 'a', 'bit', 'even', 'more', 'now', 'it', 'make', 'please', 'go', 'way']);
+
 const REFERS = '(it|that|this|the last one|this one|that one)';
 
 export function parseIntent(raw: string): Intent {
@@ -48,7 +50,10 @@ export function parseIntent(raw: string): Intent {
   if (/\b(spin|rotate|turn around)\b/.test(text) && !/\bmake\b.*\b(a|an)\b/.test(text)) return { kind: 'spin' };
 
   const refersToLast = new RegExp(`\\b(make|turn|paint|color|colour) ${REFERS}\\b`).test(text) || /^(make it|now)\b/.test(text);
-  if (refersToLast || text.split(' ').length <= 2) {
+  // Short follow-ups ("bigger", "blue", "much smaller") are made only of
+  // edit words; "tiny castle" or "red mushroom" names a new thing.
+  const editOnly = text.split(' ').every((w) => EDIT_WORDS.has(w) || w in COLORS);
+  if (refersToLast || (editOnly && text.split(' ').length <= 3)) {
     if (/\b(bigger|larger|huge|grow)\b/.test(text)) return { kind: 'scale', factor: 1.4 };
     if (/\b(smaller|tiny|shrink|little)\b/.test(text)) return { kind: 'scale', factor: 0.7 };
     for (const name of Object.keys(COLORS)) {

@@ -32,12 +32,13 @@ import { openSettings } from './core/settings-ui.js';
 import { VirtualKeyboard } from './core/keyboard.js';
 import { type LabContext, type Prototype, store } from './core/context.js';
 import { HeldPose } from './core/grab.js';
-import { HandState, Hands, pointerDistance } from './core/hands.js';
+import { grabDistance, HandState, Hands, pointerDistance } from './core/hands.js';
 import { CanvasPanel } from './core/panel.js';
 import { Sfx } from './core/sfx.js';
 import { findDesk, findWall, type SurfacePose, surfaceBelow } from './core/surfaces.js';
 import { ClayPrototype } from './protos/clay/clay.js';
 import { ConjurePrototype } from './protos/conjure/conjure.js';
+import { StudioPrototype } from './protos/studio.js';
 import { FocusPrototype } from './protos/focus/focus.js';
 import { GolfPrototype } from './protos/golf/golf.js';
 import { HubPrototype } from './protos/hub.js';
@@ -109,6 +110,8 @@ export class LabSystem extends createSystem({
   private mouseDown = false;
   private mouseDownPending = false;
   private mouseUpPending = false;
+  /** Right button or Shift: grab only, no pinch (e.g. move a sketch stroke). */
+  private mouseGrabOnly = false;
   private readonly found: SurfacePose = { position: new Vector3(), yaw: 0, label: '' };
   private readonly foundWall: SurfacePose = { position: new Vector3(), yaw: 0, label: '' };
 
@@ -170,6 +173,7 @@ export class LabSystem extends createSystem({
       new ClayPrototype(),
       new SketchPrototype(),
       new GolfPrototype(),
+      new StudioPrototype(),
       new IntroPrototype(() => this.go('hub')),
     ];
     for (const p of this.protos) {
@@ -432,12 +436,12 @@ export class LabSystem extends createSystem({
         if (!p.tracked) continue;
         const d = this.barDistance(p);
         near = Math.min(near, d);
-        if (p.pinchStarted && d < 0.035) {
+        if ((p.pinchStarted || p.grabStarted) && d < 0.035) {
           const pose = new HeldPose();
           pose.begin(p, this.desk, { upright: true });
           this.deskGrab = { hand: p, pose };
           p.clearEdges();
-          Sfx.pinch(p.isMouse ? undefined : p.pinchPoint);
+          Sfx.pinch(p.isMouse ? undefined : p.holdPoint);
           break;
         }
       }
@@ -446,7 +450,7 @@ export class LabSystem extends createSystem({
     }
     const { hand, pose } = this.deskGrab;
     mat.emissiveIntensity = 1;
-    if (!hand.pinching || !hand.tracked) {
+    if (!(hand.pinching || hand.grabbing) || !hand.tracked) {
       this.deskGrab = null;
       this.saveDesk();
       Sfx.place(this.desk.getWorldPosition(this.tmp));
@@ -465,10 +469,11 @@ export class LabSystem extends createSystem({
     const a = this.desk.localToWorld(this.tmp.set(-BAR_HALF, BAR_Y, BAR_Z));
     const b = this.desk.localToWorld(this.tmp2.set(BAR_HALF, BAR_Y, BAR_Z));
     const ab = b.sub(a);
-    const point = p.isMouse ? p.pinchPoint : p.pinchPoint;
-    const t = Math.min(1, Math.max(0, this.barScratch.copy(point).sub(a).dot(ab) / ab.lengthSq()));
-    const closest = this.barScratch.copy(a).addScaledVector(ab, t);
-    return pointerDistance(p, closest);
+    const near = (point: Vector3, dist: (p: HandState, v: Vector3) => number): number => {
+      const t = Math.min(1, Math.max(0, this.barScratch.copy(point).sub(a).dot(ab) / ab.lengthSq()));
+      return dist(p, this.barScratch.copy(a).addScaledVector(ab, t));
+    };
+    return Math.min(near(p.pinchPoint, pointerDistance), near(p.grabPoint, grabDistance));
   }
 
   private setPose(group: Group, position: Vector3, yaw: number): void {
@@ -723,6 +728,7 @@ export class LabSystem extends createSystem({
     const down = (e: PointerEvent): void => {
       if (this.ctx.immersive) return;
       toNdc(e);
+      this.mouseGrabOnly = e.button === 2 || e.shiftKey;
       this.mouseDown = true;
       this.mouseDownPending = true;
       Sfx.unlock();
@@ -747,11 +753,14 @@ export class LabSystem extends createSystem({
       const n = Number.parseInt(e.key, 10);
       if (Number.isInteger(n) && this.protos[n]) this.go(this.protos[n].id);
     };
+    const noMenu = (e: Event): void => e.preventDefault();
+    canvas.addEventListener('contextmenu', noMenu);
     canvas.addEventListener('pointerdown', down);
     canvas.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
     window.addEventListener('keydown', key);
     this.cleanupFuncs.push(
+      () => canvas.removeEventListener('contextmenu', noMenu),
       () => canvas.removeEventListener('pointerdown', down),
       () => canvas.removeEventListener('pointermove', move),
       () => window.removeEventListener('pointerup', up),
@@ -762,9 +771,15 @@ export class LabSystem extends createSystem({
   /** Present the mouse as a pinching hand on the current mouse plane. */
   private updateMouse(): void {
     const m = this.mouse;
-    m.pinchStarted = this.mouseDownPending;
-    m.pinchEnded = this.mouseUpPending;
-    m.pinching = this.mouseDown || this.mouseDownPending;
+    // A left click is both a pinch and a grab, so desktop needs one button;
+    // right-click or Shift-click is a grab alone.
+    const pinchToo = !this.mouseGrabOnly;
+    m.grabStarted = this.mouseDownPending;
+    m.grabEnded = this.mouseUpPending;
+    m.grabbing = this.mouseDown || this.mouseDownPending;
+    m.pinchStarted = pinchToo && m.grabStarted;
+    m.pinchEnded = pinchToo && m.grabEnded;
+    m.pinching = pinchToo && m.grabbing;
     this.mouseDownPending = false;
     this.mouseUpPending = false;
     m.gesture = null;
@@ -784,6 +799,7 @@ export class LabSystem extends createSystem({
     if (t <= 0) return;
     const before = this.tmp2.copy(m.pinchPoint);
     m.pinchPoint.copy(m.rayOrigin).addScaledVector(m.rayDir, t);
+    m.grabPoint.copy(m.pinchPoint);
     m.indexTip.copy(m.pinchPoint);
     m.thumbTip.copy(m.pinchPoint);
     m.palm.copy(m.pinchPoint);
@@ -929,7 +945,7 @@ export class LabSystem extends createSystem({
         return { x: rect.left + ((v.x + 1) / 2) * rect.width, y: rect.top + ((1 - v.y) / 2) * rect.height };
       },
       hands: () =>
-        this.hands.both.map((h) => ({ side: h.side, tracked: h.tracked, pinching: h.pinching, gap: h.indexTip.distanceTo(h.thumbTip) })),
+        this.hands.both.map((h) => ({ side: h.side, tracked: h.tracked, pinching: h.pinching, grabbing: h.grabbing, gap: h.indexTip.distanceTo(h.thumbTip), midGap: h.tips[2].distanceTo(h.thumbTip) })),
     };
     (window as unknown as { lab: typeof api }).lab = api;
   }

@@ -12,12 +12,13 @@ division.
 
 | # | Prototype | Track | One-line pitch |
 |---|---|---|---|
-| 1 | **Desk Focus** | Productivity | A daily planner on your real desk, all within reach: pinch cards off a desk planner, twist a timer, drop them in Done, grow a streak plant. A glance display on the wall shows the timer and progress. |
+| 1 | **Desk Focus** | Productivity | A daily planner on your real desk, all within reach: grab cards off a desk planner, twist a timer, drop them in Done, grow a streak plant. A glance display on the wall shows the timer and progress. |
 | 2 | **Conjure** | Productivity / creative (Agentic) | Say or type what you want and it appears on your desk; a chat log keeps the back-and-forth. Instant offline sketch, optionally upgraded by Meshy or Tripo. |
 | 3 | **Shot Board** | Productivity / creative | Storyboard a scene on your desk. Frame shots with both hands like a director, anywhere in the lab; they collect on the board. |
-| 4 | **Clay** | Productivity / creative | Sculpt with your bare fingertips on a turntable; size slider, colour wheel, export to OBJ. |
-| 5 | **Sketch** | Productivity / creative | Pinch to draw in the air with either hand or both; colour wheel with recent colours, sizes, undo, autosave. |
+| 4 | **Clay** | Productivity / creative | Sculpt with your bare fingertips on a turntable; size slider, colour wheel, export to OBJ, and **Print copy**: a solid copy builds up beside the turntable and you can pick it up. |
+| 5 | **Sketch** | Productivity / creative | Pinch to draw in the air with either hand or both; grab a stroke with thumb + middle finger to move it. Colour wheel with recent colours, sizes, undo, autosave. |
 | 6 | **Desk Links** | Gaming (reference) | Fingertip mini golf on your desk, kept for comparing hand mechanics. |
+| 7 | **Studio** | Productivity / creative | Sketch, Conjure and the storyboard in one workspace: draw, conjure objects by voice or keyboard, arrange everything by hand, then frame shots with both hands onto the storyboard on your wall. |
 
 ## Run it
 
@@ -29,9 +30,11 @@ npm run typecheck
 npm run build
 ```
 
-- **Desktop:** the mouse stands in for a pinching hand. Use the buttons at the
-  bottom of the page or keys `0`-`5` to switch prototypes, or open `?p=focus`
-  (also `conjure`, `shotboard`, `clay`, `golf`, `hub`).
+- **Desktop:** the mouse stands in for a hand. A left-drag is both a pinch
+  and a grab; a right-drag or Shift-drag is a grab only (use it to move a
+  Sketch stroke). Use the buttons at the bottom of the page or keys `0`-`8`
+  to switch prototypes, or open `?p=focus` (also `conjure`, `shotboard`,
+  `clay`, `sketch`, `golf`, `studio`, `hub`).
 - **`?skeleton=1`** draws procedural hands. Use it for recordings, or when the
   stock hand models cannot load (they come from a CDN).
 - **Quest on the same Wi-Fi:** run `npx @iwsdk/cli dev status` and open the
@@ -57,14 +60,14 @@ there. AI generation needs the `api/gen3d.ts` proxy on Vercel.
    it ("Found your table"). If it can't find one, hold your hand (or a
    controller) over the desk and pinch (or pull the trigger). The setup panel
    shows how many room surfaces the headset reported. If you do nothing, the
-   desk appears in front of you after a few seconds; move it later with
-   **Move desk** in the menu.
+   desk appears in front of you after a few seconds; move it later by
+   pinching the bar on its front edge.
    - If the browser's own enter prompt doesn't appear (Quest sometimes skips
      it after a reload), use the **Enter mixed reality** button on the page.
 3. A **40-second tutorial** teaches the four moves by doing them. A ghost
    fingertip demonstrates each one:
    1. poke a glowing button;
-   2. pinch an orb and carry it into a ring;
+   2. grab an orb with thumb + middle finger and carry it into a ring;
    3. pinch a dial's rim and twist it;
    4. turn your left palm toward you to open the menu.
 4. The hub opens. The first time you enter each prototype, a **How to** card
@@ -77,16 +80,22 @@ state, clear the site's storage.
 ## How the hands work
 
 Everything is reachable within arm's length while seated, so the default
-interaction is **direct touch**, not rays:
+interaction is **direct touch**, not rays. There are two pinches, and one hand
+can only do one at a time:
+- **Pinch = thumb + index.** Draw, press, twist, slide, and frame shots.
+- **Grab = thumb + middle finger.** Pick things up and move them.
+
+The cursor ring sits between the thumb and whichever finger is closer. It
+fills with the app's colour for a pinch and gold for a grab.
 
 | Gesture | Does |
 |---|---|
 | Poke a button with your index fingertip, or pinch on it | Press it |
-| Pinch near an object | Pick it up. It follows your hand, rotation included: turn your wrist to turn it. Release to drop. |
-| Pinch with both hands on one object | Scale and turn it (Conjure) |
+| Grab (thumb + middle) an object | Pick it up: cards, Conjure creations, Shot Board figures, Sketch strokes, Clay prints, the tutorial orb. It follows your hand, rotation included: turn your wrist to turn it. Release to drop. |
+| Grab one object with both hands | Scale and turn it (Conjure, Studio) |
 | Pinch both hands at the same moment, close together, then pull apart | Frame a camera shot, in any app (Sketch included); let go to capture it to the album. Pinches that start at different moments draw or grab as usual |
 | Pinch a dial or rim and move around it | Twist it (timer, turntable) |
-| Pinch the bar on the front edge of the desk mat | Move the whole workspace; turn your wrist to turn it. It stays there next time |
+| Pinch or grab the bar on the front edge of the desk mat | Move the whole workspace; turn your wrist to turn it. It stays there next time |
 | Pinch (or touch) the colour wheel and drag | Ring = hue, inner square = saturation and brightness; recent colours underneath. The **Colour** button shows or hides it (Sketch, Clay) |
 | Pinch the knob of a desk slider and slide | Change a value: Clay's sculpture size, 0.5x to 2x |
 | Poke keys on the desk keyboard | Type; **Mic** dictates. Opens from Desk Focus **New card** and Conjure **Type** |
@@ -96,7 +105,7 @@ interaction is **direct touch**, not rays:
 **Controllers work too**, though hands are the design target:
 - the controller acts as a fingertip 5 cm ahead of the grip, so you can poke
   with it;
-- the trigger is the pinch;
+- the trigger is the pinch, and the grip button is the grab;
 - X or A opens and closes the menu.
 
 There is no locomotion: the experience is designed to be used seated.
@@ -106,9 +115,9 @@ There is no locomotion: the experience is designed to be used seated.
 a gradient dome, a floor, and a tabletop under the desk mat. The choice is
 remembered.
 
-**Feedback without haptics.** A pinch cursor between thumb and index closes
-as they come together and fills with the prototype's colour when the pinch
-registers. Every interaction also has a sound, synthesised at runtime (no
+**Feedback without haptics.** A cursor ring between the thumb and the nearer
+finger closes as they come together. It fills with the prototype's colour
+when a pinch registers, or gold for a grab. Every interaction also has a sound, synthesised at runtime (no
 audio files) and positioned in the room where it happened:
 - a soft tick on press;
 - a pluck on grab;
@@ -205,7 +214,9 @@ src/protos/focus/        Desk Focus (focus-store.ts is the pure data model)
 src/protos/conjure/      Conjure (intent.ts parser, kit.ts offline generator, remote.ts client)
 src/protos/shotboard/    Shot Board
 src/protos/clay/         Clay (sculpt.ts is the pure sculpting maths)
-src/protos/sketch/       Sketch (pinch-to-draw strokes)
+src/protos/sketch/       Sketch (pinch-to-draw strokes, grab to move them)
+src/protos/studio.ts     Studio: embeds Sketch + Conjure + a storyboard wall
+src/core/storyboard.ts   storyboard wall and animatic player (Shot Board, Studio)
 src/core/grab.ts         hand-rotation hold used by every pickable object
 src/core/camera-frame.ts two-hand frame gesture and the shared shot album
 src/core/settings-ui.ts  page Settings dialog (AI keys)
@@ -224,8 +235,11 @@ For the automated browser tests, `window.lab` exposes `go(id)`, `state()`,
 
 **Verified** in desktop Chromium and in the IWER emulator with emulated hands:
 - every prototype's main interaction;
-- the **whole tutorial**: fingertip poke, pinch-carry, twist, and the palm-up
+- the **whole tutorial**: fingertip poke, grab-carry, twist, and the palm-up
   wrist menu;
+- the thumb + middle grab, using IWER's `pinch-middle` hand pose: moving
+  Sketch strokes, picking up Clay prints, and Studio's arrangement of
+  strokes, creations and two-hand shots;
 - auto-placing the desk on the emulated room's labelled table;
 - pinch-to-place fallback;
 - carrying a card to the focus pad;
@@ -234,7 +248,7 @@ For the automated browser tests, `window.lab` exposes `go(id)`, `state()`,
 - two-hand shot framing;
 - first-visit how-to cards.
 
-The 39 unit tests, typecheck and production build pass.
+The 53 unit tests, typecheck and production build pass.
 
 **Not yet verified on a real Quest:**
 - plane detection in a real room;
@@ -243,6 +257,8 @@ The 39 unit tests, typecheck and production build pass.
 - Web Speech API availability in the Quest browser (every voice path has a
   pinch fallback);
 - the feel of the palm threshold;
+- how reliably real hand tracking tells a thumb + middle grab from a
+  thumb + index pinch (thresholds in `src/core/hands.ts`);
 - frame rate;
 - how the positional (HRTF) audio sounds on the Quest speakers.
 

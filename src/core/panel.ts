@@ -130,6 +130,11 @@ export class CanvasPanel {
     CanvasPanel.all.push(this);
   }
 
+  /** True if the point is over any panel that is showing right now. */
+  static anyContains(world: Vector3, depth = 0.04): boolean {
+    return CanvasPanel.all.some((p) => isVisible(p.mesh) && p.contains(world, depth));
+  }
+
   /** World-space centre of a button, for automated pokes. Null if absent. */
   buttonWorld(id: string): Vector3 | null {
     const index = this.buttons.findIndex((b) => b.id === id);

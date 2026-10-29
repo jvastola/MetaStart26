@@ -27,7 +27,7 @@ import { Burst } from '../../core/burst.js';
 import type { LabContext, Prototype } from '../../core/context.js';
 import { ACCENTS, blobShadow } from '../../core/art.js';
 import { HeldPose } from '../../core/grab.js';
-import { type HandState, pointerDistance } from '../../core/hands.js';
+import { grabDistance, type HandState } from '../../core/hands.js';
 import { CanvasPanel } from '../../core/panel.js';
 import { Sfx } from '../../core/sfx.js';
 import { Voice } from '../../core/voice.js';
@@ -83,7 +83,7 @@ export class ConjurePrototype implements Prototype {
   readonly howTo = [
     'Press Speak and say what you want, or pinch an idea.',
     'Follow up: "make it blue", "bigger", "another one".',
-    'Pinch a creation to move it; use both hands to scale.',
+    'Grab a creation (thumb + middle finger) to move it; use both hands to scale.',
   ];
   readonly deskRoot = new Group();
   readonly wallRoot = new Group();
@@ -145,6 +145,11 @@ export class ConjurePrototype implements Prototype {
 
   holding(): boolean {
     return this.holds.length > 0;
+  }
+
+  /** True if this hand is carrying a creation. */
+  heldBy(hand: HandState): boolean {
+    return this.holds.some((h) => h.hand === hand);
   }
 
   // ------------------------------------------------------------ intents
@@ -319,18 +324,18 @@ export class ConjurePrototype implements Prototype {
 
   private updateGrabs(): void {
     for (const hand of this.ctx.pointers) {
-      if (!hand.tracked || !hand.pinchStarted || this.panel.contains(hand.pinchPoint)) continue;
+      if (!hand.tracked || !hand.grabStarted || this.panel.contains(hand.holdPoint)) continue;
       const item = this.itemNear(hand);
       if (!item) continue;
       const other = this.holds.find((h) => h.item === item && h.hand !== hand);
       if (other) {
         // Second hand on the same object: scale and turn with both hands.
-        const d = hand.pinchPoint.distanceTo(other.hand.pinchPoint);
+        const d = hand.holdPoint.distanceTo(other.hand.holdPoint);
         this.twoHand = {
           item,
           startDist: Math.max(d, 0.02),
           startScale: item.holder.scale.x,
-          startAngle: Math.atan2(hand.pinchPoint.x - other.hand.pinchPoint.x, hand.pinchPoint.z - other.hand.pinchPoint.z),
+          startAngle: Math.atan2(hand.holdPoint.x - other.hand.holdPoint.x, hand.holdPoint.z - other.hand.holdPoint.z),
           startYaw: item.holder.rotation.y,
         };
       }
@@ -338,7 +343,7 @@ export class ConjurePrototype implements Prototype {
       const pose = new HeldPose();
       pose.begin(hand, item.holder);
       this.holds.push({ item, hand, pose });
-      Sfx.pinch(hand.pinchPoint);
+      Sfx.pinch(hand.holdPoint);
     }
 
     if (this.twoHand) {
@@ -346,11 +351,11 @@ export class ConjurePrototype implements Prototype {
       if (pair.length === 2) {
         const [a, b] = pair;
         const t = this.twoHand;
-        const d = a.hand.pinchPoint.distanceTo(b.hand.pinchPoint);
+        const d = a.hand.holdPoint.distanceTo(b.hand.holdPoint);
         const s = Math.min(4, Math.max(0.2, (t.startScale * d) / t.startDist));
         t.item.holder.scale.setScalar(s);
         t.item.holder.userData.userScaled = true;
-        const angle = Math.atan2(b.hand.pinchPoint.x - a.hand.pinchPoint.x, b.hand.pinchPoint.z - a.hand.pinchPoint.z);
+        const angle = Math.atan2(b.hand.holdPoint.x - a.hand.holdPoint.x, b.hand.holdPoint.z - a.hand.holdPoint.z);
         t.item.holder.rotation.y = t.startYaw + (angle - t.startAngle);
       } else {
         this.twoHand = null;
@@ -359,7 +364,7 @@ export class ConjurePrototype implements Prototype {
 
     for (let i = this.holds.length - 1; i >= 0; i -= 1) {
       const hold = this.holds[i];
-      if (!hold.hand.pinching || !hold.hand.tracked) {
+      if (!hold.hand.grabbing || !hold.hand.tracked) {
         this.holds.splice(i, 1);
         this.release(hold);
         continue;
@@ -389,7 +394,7 @@ export class ConjurePrototype implements Prototype {
     for (const item of this.items) {
       item.holder.getWorldPosition(this.tmp2);
       this.tmp2.y += 0.06 * item.holder.scale.y;
-      const d = pointerDistance(hand, this.tmp2);
+      const d = grabDistance(hand, this.tmp2);
       const reach = 0.08 * Math.max(0.7, item.holder.scale.x);
       if (d < reach && d < bestDist) {
         best = item;

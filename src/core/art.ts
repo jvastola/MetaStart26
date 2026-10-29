@@ -43,6 +43,7 @@ export const ACCENTS = {
   clay: '#ff9a76',
   golf: '#8fd1ff',
   sketch: '#ff9ad5',
+  studio: '#ffe07a',
   intro: '#9fc7ff',
 } as const;
 
@@ -136,9 +137,9 @@ export class DeskMat {
 }
 
 /**
- * Pinch cursor: a ring between thumb and index that closes as they come
- * together and fills with the accent colour when the pinch registers, plus
- * a small dot on the index tip for poking.
+ * Pinch cursor: a ring between the thumb and whichever finger is closer to
+ * it. Thumb + index fills with the accent colour (draw, press); thumb +
+ * middle fills gold (grab). A small dot on the index tip shows the poke.
  */
 export class HandCursor {
   readonly group = new Group();
@@ -148,6 +149,7 @@ export class HandCursor {
   private readonly dotMat = new MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.9, depthWrite: false });
   private readonly accent = new Color(ACCENTS.hub);
   private readonly white = new Color('#ffffff');
+  private readonly gold = new Color(GRAB_COLOR);
 
   constructor() {
     this.ring = new Mesh(new RingGeometry(0.8, 1, 32), this.ringMat);
@@ -165,16 +167,21 @@ export class HandCursor {
   update(hand: HandState, head: Vector3, visible: boolean): void {
     this.group.visible = visible && hand.tracked && !hand.isMouse;
     if (!this.group.visible) return;
-    const gap = hand.indexTip.distanceTo(hand.thumbTip);
-    // Ring radius follows the pinch gap; hide it when the hand is wide open.
+    const indexGap = hand.indexTip.distanceTo(hand.thumbTip);
+    const midGap = hand.tips[2].distanceTo(hand.thumbTip);
+    const grabSide = hand.grabbing || (!hand.pinching && midGap < indexGap);
+    const gap = grabSide ? midGap : indexGap;
+    const on = grabSide ? hand.grabbing : hand.pinching;
+    const tint = grabSide ? this.gold : this.accent;
+    // Ring radius follows the gap; hide it when the hand is wide open.
     const r = Math.max(0.006, Math.min(0.03, gap * 0.55));
     this.ring.visible = gap < 0.07;
-    this.ring.position.copy(hand.pinchPoint);
+    this.ring.position.copy(grabSide ? hand.grabPoint : hand.pinchPoint);
     this.ring.scale.setScalar(r);
     this.ring.lookAt(head);
     const closeness = Math.min(1, Math.max(0, (0.07 - gap) / 0.05));
-    this.ringMat.color.copy(this.white).lerp(this.accent, hand.pinching ? 1 : closeness * 0.5);
-    this.ringMat.opacity = hand.pinching ? 1 : 0.25 + closeness * 0.5;
+    this.ringMat.color.copy(this.white).lerp(tint, on ? 1 : closeness * 0.5);
+    this.ringMat.opacity = on ? 1 : 0.25 + closeness * 0.5;
     this.dot.position.copy(hand.indexTip);
     this.dotMat.color.copy(hand.pinching ? this.accent : this.white);
   }
@@ -189,6 +196,9 @@ function rounded(ctx: CanvasRenderingContext2D, x: number, y: number, w: number,
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
 }
+
+/** Colour that marks the thumb + middle grab everywhere. */
+export const GRAB_COLOR = '#ffc94d';
 
 /** '#rrggbb' to an rgba() string (canvas colours are sRGB, so no conversion). */
 export function withAlpha(hex: string, alpha: number): string {

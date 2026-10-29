@@ -7,7 +7,7 @@
  * you left it.
  *
  * Hands:
- *   - pinch a card to pick it up; drop it on a board column, the focus pad,
+ *   - grab a card (thumb + middle finger) to pick it up; drop it on a board column, the focus pad,
  *     or the Done tray. A fast flick while holding completes it.
  *   - pinch the dial rim and twist to set minutes; let go to start.
  *   - microgestures: thumb tap = start/pause, swipe left/right = next card,
@@ -121,6 +121,8 @@ interface Hold {
   hand: HandState;
   pose: HeldPose;
   from: Zone;
+  /** Hand speed while held, from the frame before release (letting go moves the fingers). */
+  speed: number;
 }
 
 export class FocusPrototype implements Prototype {
@@ -129,7 +131,7 @@ export class FocusPrototype implements Prototype {
   readonly tagline = 'Planner pinned to your real room';
   readonly accent = ACCENTS.focus;
   readonly howTo = [
-    'Pinch a card on the wall and carry it to the blue FOCUS pad.',
+    'Grab a card with thumb + middle finger and carry it to the blue FOCUS pad.',
     'Pinch the dial rim and twist to set minutes; let go to start.',
     'Done? Drop the card in the green tray, or flick it away.',
   ];
@@ -406,26 +408,29 @@ export class FocusPrototype implements Prototype {
   private updateGrabs(): void {
     // Pick up.
     for (const hand of this.ctx.pointers) {
-      if (!hand.tracked || !hand.pinchStarted || this.isHolding(hand)) continue;
-      if (this.panel.contains(hand.pinchPoint)) continue;
+      if (!hand.tracked || !hand.grabStarted || this.isHolding(hand)) continue;
+      if (this.panel.contains(hand.holdPoint)) continue;
       const view = this.nearestCard(hand);
       if (!view) continue;
       this.cards.updateMatrixWorld(true);
       // The card follows your hand, including its rotation.
       const pose = new HeldPose();
       pose.begin(hand, view.mesh);
-      this.holds.push({ view, hand, pose, from: view.card.zone });
+      this.holds.push({ view, hand, pose, from: view.card.zone, speed: 0 });
       if (hand.isMouse) {
         // Drag the card on a plane facing the camera through its position.
         this.ctx.camera.getWorldDirection(this.tmp2).negate();
         this.ctx.setMousePlane(view.mesh.getWorldPosition(this.tmp), this.tmp2);
       }
-      Sfx.pinch(hand.pinchPoint);
+      Sfx.pinch(hand.holdPoint);
     }
     // Carry and drop.
     for (let i = this.holds.length - 1; i >= 0; i -= 1) {
       const hold = this.holds[i];
-      if (hold.hand.pinching && hold.hand.tracked) continue;
+      if (hold.hand.grabbing && hold.hand.tracked) {
+        hold.speed = hold.hand.pinchVelocity.length();
+        continue;
+      }
       this.holds.splice(i, 1);
       this.drop(hold);
       if (hold.hand.isMouse) {
@@ -447,7 +452,7 @@ export class FocusPrototype implements Prototype {
         const along = this.tmp2.copy(p).sub(hand.rayOrigin).dot(hand.rayDir);
         d = this.tmp2.copy(hand.rayOrigin).addScaledVector(hand.rayDir, along).distanceTo(p);
       } else {
-        d = p.distanceTo(hand.pinchPoint);
+        d = p.distanceTo(hand.grabPoint);
       }
       if (d < bestDist) {
         bestDist = d;
@@ -462,7 +467,7 @@ export class FocusPrototype implements Prototype {
     const id = view.card.id;
     if (hand.isMouse && this.dropByRay(hold)) return;
     const world = view.mesh.getWorldPosition(new Vector3());
-    const speed = hand.pinchVelocity.length();
+    const speed = hold.speed;
     const local = this.deskLocal(world, this.tmp);
     if (Math.hypot(local.x - TRAY.x, local.z - TRAY.z) < 0.09 && local.y < 0.12) {
       this.completeCard(id);

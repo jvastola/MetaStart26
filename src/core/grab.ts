@@ -1,6 +1,6 @@
 /**
  * Hold an object the way a hand holds it: the object's pose is stored in the
- * hand's frame when the pinch starts, then re-applied every frame. Turning
+ * hand's frame when the grab starts (thumb + middle finger, or a pinch), then re-applied every frame. Turning
  * your wrist turns the object; no separate rotate gizmo is needed.
  */
 
@@ -27,14 +27,14 @@ export class HeldPose {
     object.updateMatrixWorld(true);
     const handQ = handQuat(hand, options, tmpQ);
     const inv = tmpQ2.copy(handQ).invert();
-    object.getWorldPosition(this.offsetPos).sub(hand.pinchPoint).applyQuaternion(inv);
+    object.getWorldPosition(this.offsetPos).sub(hand.holdPoint).applyQuaternion(inv);
     this.offsetQuat.copy(inv).multiply(object.getWorldQuaternion(tmpQ));
   }
 
   /** Move `object` (in its parent's space) to follow the hand. */
   apply(hand: HandState, object: Object3D, options: HoldOptions = {}): void {
     const handQ = handQuat(hand, options, tmpQ);
-    const worldPos = tmpV.copy(this.offsetPos).applyQuaternion(handQ).add(hand.pinchPoint);
+    const worldPos = tmpV.copy(this.offsetPos).applyQuaternion(handQ).add(hand.holdPoint);
     const worldQuat = handQ.multiply(this.offsetQuat);
     const parent = object.parent;
     if (parent) {

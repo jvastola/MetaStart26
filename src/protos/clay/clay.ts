@@ -8,6 +8,10 @@
  *   Mirror  - every stroke is mirrored left/right.
  * Pinch the turntable rim and drag around to spin it. Undo, reset, colour,
  * and export to .obj. The sculpt autosaves locally.
+ *
+ * Print makes a solid copy of the sculpture that "prints" up from a pad
+ * beside the turntable. Grab a print with thumb + middle finger to pick it
+ * up; let go low over the desk and it settles onto the desk.
  */
 
 import {
@@ -15,17 +19,21 @@ import {
   BufferGeometry,
   Color,
   CylinderGeometry,
+  Euler,
   Group,
   Mesh,
   MeshStandardMaterial,
+  Plane,
   Raycaster,
+  RingGeometry,
   TorusGeometry,
   Vector2,
   Vector3,
 } from '@iwsdk/core';
 import { type LabContext, type Prototype, store } from '../../core/context.js';
 import { ACCENTS, blobShadow } from '../../core/art.js';
-import type { HandState } from '../../core/hands.js';
+import { HeldPose } from '../../core/grab.js';
+import { grabDistance, type HandState } from '../../core/hands.js';
 import { ColorWheel } from '../../core/color-wheel.js';
 import { DeskSlider } from '../../core/slider.js';
 import { CanvasPanel } from '../../core/panel.js';
@@ -57,6 +65,23 @@ const SAVE_KEY = 'clay-sculpt-v1';
 const CLAY_COLOR = '#c98b62';
 const COLOR_KEY = 'clay-color-v1';
 const SCALE_KEY = 'clay-scale-v1';
+/** Where prints appear, desk-local. */
+const PRINT_PAD = new Vector3(-0.19, 0, 0.07);
+const MAX_PRINTS = 6;
+const PRINT_TIME = 1.6;
+
+interface Print {
+  holder: Group;
+  mesh: Mesh;
+  material: MeshStandardMaterial;
+  height: number;
+  /** 0..1 while printing, then 1. */
+  progress: number;
+  /** Clip plane in world space that rises as the print builds. */
+  clip: Plane;
+  settleTo: number | null;
+}
+
 /** Slider 0..1 to sculpture scale 0.5x..2x (1x in the middle). */
 const sliderToScale = (v: number): number => 0.5 * 4 ** v;
 
@@ -69,6 +94,7 @@ export class ClayPrototype implements Prototype {
     'Press your fingertips into the clay to dent it.',
     'Pinch the surface and pull to drag clay out.',
     'Pinch the gold rim and drag to spin the turntable.',
+    'Print copy, then grab the print with thumb + middle finger.',
   ];
   readonly deskRoot = new Group();
   readonly wallRoot = new Group();
@@ -93,10 +119,15 @@ export class ClayPrototype implements Prototype {
   private touching = false;
   private pulls: { hand: HandState; grab: Grab; start: Vector3 }[] = [];
   private spin: { hand: HandState; last: number } | null = null;
+  private prints: Print[] = [];
+  private printHolds: { print: Print; hand: HandState; pose: HeldPose }[] = [];
+  private printPad!: Mesh;
+  private printed = 0;
   private readonly tips = new Float32Array(20 * 3);
   private readonly tmp = new Vector3();
   private readonly tmp2 = new Vector3();
   private readonly raycaster = new Raycaster();
+  private readonly euler = new Euler();
   private readonly ndc = new Vector2();
 
   init(ctx: LabContext): void {
@@ -153,6 +184,15 @@ export class ClayPrototype implements Prototype {
     this.sizeSlider.onChange = (v) => this.setScale(sliderToScale(v));
     this.deskRoot.add(this.sizeSlider.group);
     this.setScale(sliderToScale(this.sizeSlider.value));
+
+    // Print pad: a glowing ring where copies build up.
+    this.printPad = new Mesh(new RingGeometry(0.045, 0.052, 48), new MeshStandardMaterial({ color: '#f4b860', emissive: '#f4b860', emissiveIntensity: 0.4, transparent: true, opacity: 0.7 }));
+    this.printPad.rotation.x = -Math.PI / 2;
+    this.printPad.position.copy(PRINT_PAD).setY(0.002);
+    this.printPad.userData.hideInShots = true;
+    this.deskRoot.add(this.printPad);
+    // Prints build up behind a clipping plane.
+    ctx.renderer.localClippingEnabled = true;
   }
 
   enter(): void {
@@ -162,6 +202,7 @@ export class ClayPrototype implements Prototype {
   exit(): void {
     this.pulls = [];
     this.spin = null;
+    this.printHolds = [];
     this.save();
   }
 
@@ -178,7 +219,7 @@ export class ClayPrototype implements Prototype {
   }
 
   holding(): boolean {
-    return this.pulls.length > 0 || this.spin != null || this.touching || this.wheel.active || this.sizeSlider.active;
+    return this.pulls.length > 0 || this.printHolds.length > 0 || this.spin != null || this.touching || this.wheel.active || this.sizeSlider.active;
   }
 
   update(dt: number): void {
@@ -189,6 +230,7 @@ export class ClayPrototype implements Prototype {
       this.refresh();
       return;
     }
+    this.updatePrints(dt);
     this.updateGestures();
     this.updateSpin();
     if (this.ctx.immersive) this.updateHands();
@@ -233,7 +275,7 @@ export class ClayPrototype implements Prototype {
     let count = 0;
     for (const hand of this.ctx.hands.both) {
       if (!hand.tracked) continue;
-      const pulling = this.pulls.some((p) => p.hand === hand) || this.spin?.hand === hand;
+      const pulling = this.pulls.some((p) => p.hand === hand) || this.spin?.hand === hand || this.printHolds.some((p) => p.hand === hand);
       if (pulling) continue;
       for (const tip of hand.tips) {
         const l = this.local(tip, this.tmp);
@@ -406,6 +448,141 @@ export class ClayPrototype implements Prototype {
     }
     if (id === 'color') this.wheel.mesh.visible = !this.wheel.mesh.visible;
     if (id === 'export') this.exportObj();
+    if (id === 'print') this.print();
+    if (id === 'clearPrints') this.clearPrints();
+  }
+
+  // ------------------------------------------------------------ prints
+
+  /** Make a solid copy of the sculpture on the print pad. */
+  private print(): void {
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', new BufferAttribute(Float32Array.from(this.positions), 3));
+    geometry.setIndex(this.geometry.index);
+    geometry.computeVertexNormals();
+    geometry.computeBoundingBox();
+    const box = geometry.boundingBox!;
+    const scale = this.clay.scale.x;
+    const clip = new Plane(new Vector3(0, -1, 0), 0);
+    const material = new MeshStandardMaterial({ color: this.material.color.clone(), roughness: 0.6, metalness: 0.05, clippingPlanes: [clip] });
+    const mesh = new Mesh(geometry, material);
+    mesh.name = 'ClayPrint';
+    mesh.scale.setScalar(scale);
+    // Rest the copy's lowest point on the holder origin, facing as the clay does.
+    mesh.position.y = -box.min.y * scale;
+    mesh.rotation.y = this.turntable.rotation.y;
+    mesh.frustumCulled = false;
+    const holder = new Group();
+    holder.add(mesh);
+    // Side by side on the pad: newest in the middle, older ones nudge back.
+    holder.position.copy(PRINT_PAD).setY(0.004);
+    for (const p of this.prints) {
+      if (p.holder.position.distanceTo(holder.position) < 0.03) p.holder.position.z -= 0.09 * Math.max(0.6, scale);
+    }
+    this.deskRoot.add(holder);
+    this.prints.push({ holder, mesh, material, height: (box.max.y - box.min.y) * scale, progress: 0, clip, settleTo: null });
+    while (this.prints.length > MAX_PRINTS) this.removePrint(this.prints[0]);
+    this.printed += 1;
+    Sfx.whoosh(this.deskRoot.localToWorld(PRINT_PAD.clone()));
+    this.ctx.toast('Printing a copy. Grab it with thumb + middle finger.');
+  }
+
+  private removePrint(print: Print): void {
+    this.prints = this.prints.filter((p) => p !== print);
+    this.printHolds = this.printHolds.filter((h) => h.print !== print);
+    this.deskRoot.remove(print.holder);
+    print.mesh.geometry.dispose();
+    print.material.dispose();
+  }
+
+  private clearPrints(): void {
+    for (const p of [...this.prints]) this.removePrint(p);
+    Sfx.whoosh();
+  }
+
+  private updatePrints(dt: number): void {
+    // Build: the clip plane rises from the base to the top.
+    for (const p of this.prints) {
+      if (p.progress < 1) {
+        p.progress = Math.min(1, p.progress + dt / PRINT_TIME);
+        p.holder.updateMatrixWorld(true);
+        const base = p.holder.getWorldPosition(this.tmp);
+        const up = this.tmp2.set(0, 1, 0).transformDirection(p.holder.matrixWorld);
+        // Keep what is below base + h*progress: normal points down the holder's up.
+        p.clip.normal.copy(up).negate();
+        p.clip.constant = up.dot(base) + p.height * p.progress + 0.001;
+        if (p.progress >= 1) {
+          p.material.clippingPlanes = null;
+          p.material.needsUpdate = true;
+          Sfx.blip(980, base);
+        }
+      }
+      if (p.settleTo != null) {
+        p.holder.position.y += (p.settleTo - p.holder.position.y) * Math.min(1, dt * 12);
+        if (Math.abs(p.holder.position.y - p.settleTo) < 1e-4) {
+          p.holder.position.y = p.settleTo;
+          p.settleTo = null;
+        }
+      }
+    }
+    const busy = this.pulls.length > 0 || this.spin != null;
+    // Pick up finished prints.
+    for (const hand of this.ctx.pointers) {
+      if (busy || !hand.tracked || !hand.grabStarted || this.printHolds.some((h) => h.hand === hand)) continue;
+      if (this.panel.contains(hand.holdPoint)) continue;
+      const print = this.printNear(hand);
+      if (!print) continue;
+      // Taking a print from the other hand is fine.
+      this.printHolds = this.printHolds.filter((h) => h.print !== print);
+      const pose = new HeldPose();
+      pose.begin(hand, print.holder);
+      print.settleTo = null;
+      this.printHolds.push({ print, hand, pose });
+      if (hand.isMouse) {
+        this.ctx.camera.getWorldDirection(this.tmp2).negate();
+        this.ctx.setMousePlane(print.holder.getWorldPosition(this.tmp), this.tmp2);
+      }
+      hand.clearEdges();
+      Sfx.pinch(hand.isMouse ? undefined : hand.holdPoint);
+    }
+    for (let i = this.printHolds.length - 1; i >= 0; i -= 1) {
+      const hold = this.printHolds[i];
+      if (hold.hand.grabbing && hold.hand.tracked) {
+        hold.pose.apply(hold.hand, hold.print.holder);
+        continue;
+      }
+      this.printHolds.splice(i, 1);
+      if (hold.hand.isMouse) {
+        this.ctx.desk.getWorldPosition(this.tmp);
+        this.ctx.setMousePlane(this.tmp, this.tmp2.set(0, 1, 0));
+      }
+      // Let go low over the desk: stand it upright on the desk.
+      const h = hold.print.holder;
+      if (h.position.y < 0.1 && Math.abs(h.position.x) < 0.45 && Math.abs(h.position.z) < 0.28) {
+        const yaw = this.euler.setFromQuaternion(h.quaternion, 'YXZ').y;
+        h.quaternion.setFromAxisAngle(this.tmp2.set(0, 1, 0), yaw);
+        hold.print.settleTo = 0.004;
+      }
+      Sfx.place(h.getWorldPosition(this.tmp));
+    }
+  }
+
+  private printNear(hand: HandState): Print | null {
+    let best: Print | null = null;
+    let bestDist = Infinity;
+    for (const p of this.prints) {
+      if (p.progress < 1) continue;
+      p.holder.updateMatrixWorld(true);
+      // Aim at the middle of the print.
+      const centre = p.holder.localToWorld(this.tmp.set(0, p.height / 2, 0));
+      const d = grabDistance(hand, centre);
+      const reach = Math.max(0.045, p.height * 0.6);
+      if (d < reach && d < bestDist) {
+        best = p;
+        bestDist = d;
+      }
+    }
+    return best;
   }
 
   private exportObj(): void {
@@ -443,6 +620,8 @@ export class ClayPrototype implements Prototype {
       { id: 'undo', label: 'Undo', disabled: this.undo.length === 0 },
       { id: 'reset', label: 'Reset' },
       { id: 'export', label: 'Export' },
+      { id: 'print', label: 'Print copy', span: 2, tone: 'primary' },
+      { id: 'clearPrints', label: this.prints.length ? `Clear prints (${this.prints.length})` : 'Clear prints', span: 2, disabled: this.prints.length === 0 },
     ]);
   }
 
@@ -456,7 +635,7 @@ export class ClayPrototype implements Prototype {
       maxR = Math.max(maxR, r);
       minR = Math.min(minR, r);
     }
-    return { scale: +this.clay.scale.x.toFixed(2), wheelVisible: this.wheel.mesh.visible, tool: this.tool, mirror: this.mirror, maxR: +maxR.toFixed(4), minR: +minR.toFixed(4), undo: this.undo.length, spin: +this.turntable.rotation.y.toFixed(3) };
+    return { scale: +this.clay.scale.x.toFixed(2), wheelVisible: this.wheel.mesh.visible, tool: this.tool, mirror: this.mirror, maxR: +maxR.toFixed(4), minR: +minR.toFixed(4), undo: this.undo.length, spin: +this.turntable.rotation.y.toFixed(3), prints: this.prints.map((p) => ({ progress: +p.progress.toFixed(2), pos: p.holder.position.toArray().map((v) => +v.toFixed(3)), height: +p.height.toFixed(3) })), printing: this.printHolds.length, printed: this.printed };
   }
 
   debugActions = {
@@ -472,6 +651,14 @@ export class ClayPrototype implements Prototype {
       return { x: p.x, y: p.y, z: p.z };
     },
     reset: () => this.onButton('reset'),
+    /** World centre of a print, for aiming a test grab. */
+    printWorld: (i: number) => {
+      const p = this.prints[i];
+      if (!p) return null;
+      p.holder.updateMatrixWorld(true);
+      const w = p.holder.localToWorld(new Vector3(0, p.height / 2, 0));
+      return { x: w.x, y: w.y, z: w.z };
+    },
     sliderWorld: (v: number) => {
       const p = this.sizeSlider.worldAt(v);
       return { x: p.x, y: p.y, z: p.z };

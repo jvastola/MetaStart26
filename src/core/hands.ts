@@ -5,6 +5,8 @@
  * module adds what the prototypes need on top:
  *   - all five fingertips, wrist, palm centre and palm normal in world space;
  *   - a pinch with hysteresis, so it does not flicker at the threshold;
+ *   - a separate grab: thumb to MIDDLE finger. Thumb + index draws, presses
+ *     and twists; thumb + middle picks things up. Only one can be on per hand;
  *   - smoothed fingertip and pinch velocities, for flicks and throws;
  *   - Quest hand microgestures (thumb swipes and thumb tap), which the Quest
  *     browser reports as gamepad buttons 5-9 on a hand input source.
@@ -19,6 +21,9 @@ import { Matrix4, Quaternion, Vector3 } from '@iwsdk/core';
 const PINCH_ON = 0.018;
 /** Distance that ends it. The gap between the two stops flicker. */
 const PINCH_OFF = 0.032;
+/** Thumb-to-middle distances for the grab. */
+const GRAB_ON = 0.02;
+const GRAB_OFF = 0.034;
 /** Velocity smoothing time constant, seconds. */
 const VELOCITY_TAU = 0.04;
 
@@ -70,6 +75,10 @@ export class HandState {
   pinching = false;
   pinchStarted = false;
   pinchEnded = false;
+  /** Thumb + middle finger: the pick-up gesture. */
+  grabbing = false;
+  grabStarted = false;
+  grabEnded = false;
   /** Microgesture fired this frame, if any. */
   gesture: Microgesture | null = null;
   readonly tips: Vector3[] = TIP_JOINTS.map(() => new Vector3());
@@ -85,6 +94,8 @@ export class HandState {
    */
   readonly orientation = new Quaternion();
   readonly pinchPoint = new Vector3();
+  /** Midpoint of thumb and middle fingertips. */
+  readonly grabPoint = new Vector3();
   readonly indexVelocity = new Vector3();
   readonly pinchVelocity = new Vector3();
   /** Mouse only: the pointer ray. */
@@ -107,6 +118,7 @@ export class HandState {
   finishFrame(indexMeta: Vector3, middleMeta: Vector3, pinkyMeta: Vector3, dt: number): void {
     this.tracked = true;
     this.pinchPoint.copy(this.indexTip).add(this.thumbTip).multiplyScalar(0.5);
+    this.grabPoint.copy(this.tips[2]).add(this.thumbTip).multiplyScalar(0.5);
     this.palm.copy(this.wrist).add(middleMeta).multiplyScalar(0.5);
     const forward = handScratch.fwd.copy(middleMeta).sub(this.wrist);
     // Palm normal from the wrist->index and wrist->pinky metacarpal vectors.
@@ -127,7 +139,28 @@ export class HandState {
     this.hasLast = true;
 
     const gap = this.indexTip.distanceTo(this.thumbTip);
-    this.setPinch(this.pinching ? gap < PINCH_OFF : gap < PINCH_ON);
+    const midGap = this.tips[2].distanceTo(this.thumbTip);
+    // Whichever finger is closer to the thumb wins, and the other cannot
+    // start while it is held, so one hand never pinches and grabs at once.
+    const pinch = this.pinching ? gap < PINCH_OFF : !this.grabbing && gap < PINCH_ON && gap <= midGap;
+    const grab = this.grabbing ? midGap < GRAB_OFF : !this.pinching && !pinch && midGap < GRAB_ON && midGap < gap;
+    this.setPinch(pinch);
+    this.setGrab(grab);
+  }
+
+  setGrab(on: boolean): void {
+    const was = this.grabbing;
+    this.grabbing = on;
+    this.grabStarted = !was && on;
+    this.grabEnded = was && !on;
+  }
+
+  /**
+   * Where a held object is anchored: the grab point while grabbing (and on
+   * the frame it ends, so drops land where the hand was), else the pinch point.
+   */
+  get holdPoint(): Vector3 {
+    return (this.grabbing || this.grabEnded) && !this.isMouse ? this.grabPoint : this.pinchPoint;
   }
 
   setPinch(on: boolean): void {
@@ -170,6 +203,10 @@ export class HandState {
     this.lastPinch.copy(tip);
     this.hasLast = true;
     this.pinchPoint.copy(tip);
+    this.grabPoint.copy(tip);
+    // Grip button picks things up, like the middle-finger grab.
+    const squeeze = gamepad?.buttons[1]?.value ?? 0;
+    this.setGrab(this.grabbing ? squeeze > 0.3 : squeeze > 0.6);
     const trigger = gamepad?.buttons[0]?.value ?? 0;
     this.setPinch(this.pinching ? trigger > 0.3 : trigger > 0.6);
     // X (left) / A (right) toggles the menu.
@@ -184,6 +221,9 @@ export class HandState {
     this.pinchEnded = this.pinching;
     this.pinchStarted = false;
     this.pinching = false;
+    this.grabEnded = this.grabbing;
+    this.grabStarted = false;
+    this.grabbing = false;
     this.tracked = false;
     this.hasLast = false;
     this.gesture = null;
@@ -194,6 +234,8 @@ export class HandState {
   clearEdges(): void {
     this.pinchStarted = false;
     this.pinchEnded = false;
+    this.grabStarted = false;
+    this.grabEnded = false;
     this.gesture = null;
   }
 
@@ -327,4 +369,10 @@ export function pointerDistance(pointer: HandState, point: Vector3): number {
   const along = scratch.copy(point).sub(pointer.rayOrigin).dot(pointer.rayDir);
   if (along < 0) return Infinity;
   return scratch.copy(pointer.rayOrigin).addScaledVector(pointer.rayDir, along).distanceTo(point);
+}
+
+/** Like `pointerDistance`, measured from the grab point (thumb + middle). */
+export function grabDistance(pointer: HandState, point: Vector3): number {
+  if (pointer.isMouse) return pointerDistance(pointer, point);
+  return pointer.grabPoint.distanceTo(point);
 }

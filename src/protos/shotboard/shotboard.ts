@@ -1,12 +1,13 @@
 /**
  * Shot Board: storyboard a scene by framing shots with your hands.
  *
- * A small set sits on your desk: figures, a tree, a house, a lamp. Pinch a
- * piece to move it; turn your wrist while holding it to turn it. Frame a
- * shot anywhere in the lab by pinching with both hands and pulling them
- * apart (the host owns that gesture); every shot lands in the shared album,
- * which this board shows on your wall. "Snap view" captures straight ahead
- * for one-handed or desktop use, and "Play" runs the board as an animatic.
+ * A small set sits on your desk: figures, a tree, a house, a lamp. Grab a
+ * piece (thumb + middle finger) to move it; turn your wrist while holding
+ * it to turn it. Frame a shot anywhere in the lab by pinching with both
+ * hands and pulling them apart (the host owns that gesture); every shot
+ * lands in the shared album, which this board shows on your wall. "Snap
+ * view" captures straight ahead for one-handed or desktop use, and "Play"
+ * runs the board as an animatic.
  */
 
 import {
@@ -18,7 +19,6 @@ import {
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
-  PlaneGeometry,
   SphereGeometry,
   Vector3,
 } from '@iwsdk/core';
@@ -26,14 +26,13 @@ import { ACCENTS, blobShadow } from '../../core/art.js';
 import { SHOT_H, SHOT_W } from '../../core/camera-frame.js';
 import type { LabContext, Prototype } from '../../core/context.js';
 import { HeldPose } from '../../core/grab.js';
-import { type HandState, pointerDistance } from '../../core/hands.js';
+import { grabDistance, type HandState } from '../../core/hands.js';
 import { CanvasPanel } from '../../core/panel.js';
 import { Sfx } from '../../core/sfx.js';
+import { StoryboardWall } from '../../core/storyboard.js';
 
 const STAGE_W = 0.4;
 const STAGE_D = 0.26;
-/** The board shows the newest shots. */
-const BOARD_SLOTS = 6;
 
 interface Prop {
   group: Group;
@@ -46,8 +45,8 @@ export class ShotBoardPrototype implements Prototype {
   readonly tagline = 'Frame shots with your hands';
   readonly accent = ACCENTS.shotboard;
   readonly howTo = [
-    'Pinch a figure to move it; turn your wrist to turn it.',
-    'Pinch BOTH hands close together, pull apart to frame a shot.',
+    'Grab a figure (thumb + middle finger) to move it; turn your wrist to turn it.',
+    'Pinch (thumb + index) with BOTH hands close together, pull apart to frame a shot.',
     'Let go to capture. It works anywhere in the lab.',
   ];
   readonly deskRoot = new Group();
@@ -55,14 +54,10 @@ export class ShotBoardPrototype implements Prototype {
 
   private ctx!: LabContext;
   private panel!: CanvasPanel;
-  private board!: CanvasPanel;
+  private board!: StoryboardWall;
   private props: Prop[] = [];
   private selected: Prop | null = null;
   private drag: { prop: Prop; hand: HandState; pose: HeldPose } | null = null;
-  private quads: Mesh[] = [];
-  private playing = -1;
-  private playTime = 0;
-  private preview!: Mesh;
   private status = '';
   private readonly tmp = new Vector3();
 
@@ -79,23 +74,7 @@ export class ShotBoardPrototype implements Prototype {
     this.deskRoot.add(this.panel.mesh);
 
     // Storyboard: a 3 x 2 grid of the newest album shots.
-    this.board = new CanvasPanel({ width: 0.66, height: 0.38, columns: 1, accent: this.accent });
-    this.wallRoot.add(this.board.mesh);
-    for (let i = 0; i < BOARD_SLOTS; i += 1) {
-      const quad = new Mesh(new PlaneGeometry(0.19, 0.107), new MeshBasicMaterial({ color: '#ffffff' }));
-      quad.position.set(-0.205 + (i % 3) * 0.205, 0.07 - Math.floor(i / 3) * 0.135, 0.004);
-      quad.userData.hideInShots = true;
-      quad.visible = false;
-      this.wallRoot.add(quad);
-      this.quads.push(quad);
-    }
-    this.preview = new Mesh(new PlaneGeometry(0.56, 0.315), new MeshBasicMaterial({ color: '#ffffff' }));
-    this.preview.position.set(0, -0.01, 0.006);
-    this.preview.userData.hideInShots = true;
-    this.preview.visible = false;
-    this.wallRoot.add(this.preview);
-    ctx.album.onChange(() => this.layoutShots());
-    this.layoutShots();
+    this.board = new StoryboardWall(ctx, this.wallRoot, this.accent);
   }
 
   private buildStage(): void {
@@ -168,7 +147,7 @@ export class ShotBoardPrototype implements Prototype {
     this.status = this.ctx.immersive
       ? 'Pinch both hands close together and pull apart to frame a shot.'
       : 'Drag pieces on the stage, then Snap view to capture a shot.';
-    this.layoutShots();
+    this.board.layout();
     this.refresh();
   }
 
@@ -182,10 +161,9 @@ export class ShotBoardPrototype implements Prototype {
 
   update(dt: number): void {
     this.panel.update(this.ctx.pointers, dt);
-    this.board.update([], dt);
+    this.board.update(dt);
     this.updateGestures();
     this.updateDrag();
-    this.updatePlayback(dt);
     this.refresh();
   }
 
@@ -206,11 +184,9 @@ export class ShotBoardPrototype implements Prototype {
   // ------------------------------------------------------------ props
 
   private updateDrag(): void {
-    const { left, right } = this.ctx.hands;
-    const bothPinching = this.ctx.immersive && left.pinching && right.pinching;
     if (this.drag == null) {
       for (const hand of this.ctx.pointers) {
-        if (!hand.tracked || !hand.pinchStarted || bothPinching || this.panel.contains(hand.pinchPoint)) continue;
+        if (!hand.tracked || !hand.grabStarted || this.panel.contains(hand.holdPoint)) continue;
         const prop = this.propNear(hand);
         if (prop) {
           // Figures stay upright but turn with your wrist.
@@ -218,14 +194,14 @@ export class ShotBoardPrototype implements Prototype {
           pose.begin(hand, prop.group, { upright: true });
           this.drag = { prop, hand, pose };
           this.selected = prop;
-          Sfx.pinch(hand.pinchPoint);
+          Sfx.pinch(hand.holdPoint);
           break;
         }
       }
       return;
     }
     const { prop, hand } = this.drag;
-    if (!hand.pinching || !hand.tracked) {
+    if (!hand.grabbing || !hand.tracked) {
       prop.group.position.y = 0.008;
       this.drag = null;
       Sfx.place(prop.group.getWorldPosition(this.tmp));
@@ -246,7 +222,7 @@ export class ShotBoardPrototype implements Prototype {
     for (const prop of this.props) {
       prop.group.getWorldPosition(this.tmp);
       this.tmp.y += 0.03;
-      const d = pointerDistance(hand, this.tmp);
+      const d = grabDistance(hand, this.tmp);
       if (d < bestDist) {
         bestDist = d;
         best = prop;
@@ -266,62 +242,12 @@ export class ShotBoardPrototype implements Prototype {
     this.status = `Shot ${this.ctx.album.shots.length} captured (${caption}).`;
   }
 
-  private layoutShots(): void {
-    if (!this.board) return;
-    const shots = this.ctx.album.shots.slice(-BOARD_SLOTS);
-    this.quads.forEach((quad, i) => {
-      const shot = shots[i];
-      const material = quad.material as MeshBasicMaterial;
-      quad.visible = shot != null && this.playing < 0;
-      if (shot && material.map !== shot.texture) {
-        material.map = shot.texture;
-        material.needsUpdate = true;
-      }
-    });
-    const all = this.ctx.album.shots;
-    this.board.setText('Storyboard', '', all.length ? all.slice(-BOARD_SLOTS).map((s, i) => `${i + 1}. ${s.caption}`).join('   ') : 'No shots yet. Frame one with both hands.');
-  }
-
-  private updatePlayback(dt: number): void {
-    if (this.playing < 0) return;
-    const shots = this.ctx.album.shots.slice(-BOARD_SLOTS);
-    this.playTime += dt;
-    if (this.playTime > 1.6) {
-      this.playTime = 0;
-      this.playing += 1;
-      if (this.playing >= shots.length) {
-        this.playing = -1;
-        this.preview.visible = false;
-        this.layoutShots();
-        return;
-      }
-      Sfx.blip(500 + this.playing * 60);
-    }
-    const material = this.preview.material as MeshBasicMaterial;
-    const shot = shots[this.playing];
-    if (shot && material.map !== shot.texture) {
-      material.map = shot.texture;
-      material.needsUpdate = true;
-    }
-  }
-
-  private play(): void {
-    if (this.ctx.album.shots.length === 0) return;
-    this.playing = 0;
-    this.playTime = 0;
-    this.preview.visible = true;
-    for (const q of this.quads) q.visible = false;
-    const material = this.preview.material as MeshBasicMaterial;
-    material.map = this.ctx.album.shots.slice(-BOARD_SLOTS)[0].texture;
-    material.needsUpdate = true;
-  }
-
   // ------------------------------------------------------------ UI
 
   private onButton(id: string): void {
     if (id === 'snap') this.snapView();
     if (id === 'undo') this.ctx.album.removeLast();
-    if (id === 'play') this.play();
+    if (id === 'play') this.board.play();
   }
 
   private refresh(): void {
@@ -329,11 +255,11 @@ export class ShotBoardPrototype implements Prototype {
     this.panel.setText(
       `Shot Board - ${count} shot${count === 1 ? '' : 's'}`,
       '',
-      [this.status, this.selected ? `Holding ${this.selected.name}: turn your wrist to turn it.` : 'Pinch a piece to move it.'],
+      [this.status, this.selected ? `Holding ${this.selected.name}: turn your wrist to turn it.` : 'Grab a piece (thumb + middle finger) to move it.'],
     );
     this.panel.setButtons([
       { id: 'snap', label: 'Snap view', tone: 'primary' },
-      { id: 'play', label: this.playing >= 0 ? 'Playing' : 'Play', disabled: count === 0 },
+      { id: 'play', label: this.board.playing >= 0 ? 'Playing' : 'Play', disabled: count === 0 },
       { id: 'undo', label: 'Undo shot', disabled: count === 0 },
     ]);
   }
@@ -347,7 +273,7 @@ export class ShotBoardPrototype implements Prototype {
       props: Object.fromEntries(
         this.props.map((p) => [p.name, [+p.group.position.x.toFixed(3), +p.group.position.z.toFixed(3), +p.group.rotation.y.toFixed(2)]]),
       ),
-      playing: this.playing,
+      playing: this.board.playing,
     };
   }
 

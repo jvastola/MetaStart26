@@ -16,6 +16,12 @@ describe('parseIntent', () => {
     ['clear everything', { kind: 'clear' }],
     ['spin it', { kind: 'spin' }],
     ['', { kind: 'none' }],
+    ['tiny castle', { kind: 'create', prompt: 'tiny castle' }],
+    ['red mushroom', { kind: 'create', prompt: 'red mushroom' }],
+    ['little robot', { kind: 'create', prompt: 'little robot' }],
+    ['blue', { kind: 'recolor', name: 'blue' }],
+    ['much bigger', { kind: 'scale', factor: 1.4 }],
+    ['a bit smaller', { kind: 'scale', factor: 0.7 }],
   ])('%s', (text, expected) => {
     expect(parseIntent(text)).toMatchObject(expected);
   });

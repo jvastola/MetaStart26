@@ -122,6 +122,34 @@ const ICONS: Record<string, (c: CanvasRenderingContext2D, s: number) => void> = 
     c.bezierCurveTo(s * 0.68, s * 0.28, s * 0.78, s * 0.36, s * 0.8, s * 0.3);
     c.stroke();
   },
+  studio: (c, s) => {
+    // A drawn stroke, a conjured star and a camera frame corner.
+    c.strokeStyle = '#ffffff';
+    c.lineCap = 'round';
+    c.lineWidth = s * 0.06;
+    c.beginPath();
+    c.moveTo(s * 0.18, s * 0.7);
+    c.bezierCurveTo(s * 0.3, s * 0.4, s * 0.42, s * 0.85, s * 0.56, s * 0.6);
+    c.stroke();
+    c.fillStyle = '#ffffff';
+    c.beginPath();
+    for (let i = 0; i < 8; i += 1) {
+      const a = (i / 8) * Math.PI * 2 - Math.PI / 2;
+      const r = i % 2 === 0 ? s * 0.15 : s * 0.05;
+      c.lineTo(s * 0.68 + Math.cos(a) * r, s * 0.34 + Math.sin(a) * r);
+    }
+    c.closePath();
+    c.fill();
+    c.lineWidth = s * 0.05;
+    c.beginPath();
+    c.moveTo(s * 0.2, s * 0.36);
+    c.lineTo(s * 0.2, s * 0.2);
+    c.lineTo(s * 0.36, s * 0.2);
+    c.moveTo(s * 0.8, s * 0.64);
+    c.lineTo(s * 0.8, s * 0.8);
+    c.lineTo(s * 0.64, s * 0.8);
+    c.stroke();
+  },
   intro: (c, s) => {
     c.strokeStyle = '#ffffff';
     c.lineWidth = s * 0.06;
@@ -280,7 +308,7 @@ export class HubPrototype implements Prototype {
       '',
       this.ctx.immersive
         ? 'Poke an app with your fingertip, or pinch it. Palm up any time for Home.'
-        : 'Click an app, or press 0-6. Enter mixed reality to use your hands.',
+        : 'Click an app, or press 0-7. Enter mixed reality to use your hands.',
     );
     // Ignore the poke that opened Home so it cannot also press a tile.
     this.cooldown = 0.3;

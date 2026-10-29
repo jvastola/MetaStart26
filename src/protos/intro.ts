@@ -3,7 +3,7 @@
  * doing them, not by reading about them.
  *
  *   1. Poke   - press a glowing button with your index fingertip.
- *   2. Carry  - pinch an orb, carry it into the ring, let go.
+ *   2. Carry  - grab an orb (thumb + middle finger), carry it into the ring, let go.
  *   3. Twist  - pinch the dial's rim and turn it a quarter turn.
  *   4. Menu   - turn your left palm toward your face.
  *
@@ -27,7 +27,7 @@ import {
 import { ACCENTS, blobShadow } from '../core/art.js';
 import { Burst } from '../core/burst.js';
 import { type LabContext, type Prototype, store } from '../core/context.js';
-import { type HandState, pointerDistance } from '../core/hands.js';
+import { grabDistance, type HandState, pointerDistance } from '../core/hands.js';
 import { CanvasPanel, THEME } from '../core/panel.js';
 import { Sfx } from '../core/sfx.js';
 
@@ -216,10 +216,10 @@ export class IntroPrototype implements Prototype {
   private updateCarry(dt: number): void {
     if (this.carry == null) {
       for (const p of this.ctx.pointers) {
-        if (!p.tracked || !p.pinchStarted) continue;
-        if (pointerDistance(p, this.orb.getWorldPosition(this.tmp)) < 0.05) {
+        if (!p.tracked || !p.grabStarted) continue;
+        if (grabDistance(p, this.orb.getWorldPosition(this.tmp)) < 0.05) {
           this.carry = p;
-          Sfx.pinch(p.pinchPoint);
+          Sfx.pinch(p.holdPoint);
           if (p.isMouse) {
             this.ctx.desk.getWorldPosition(this.tmp);
             this.ctx.setMousePlane(this.tmp.setY(this.tmp.y + ORB_HOME.y), this.tmp2.set(0, 1, 0));
@@ -232,9 +232,11 @@ export class IntroPrototype implements Prototype {
       return;
     }
     const hand = this.carry;
-    const local = this.deskRoot.worldToLocal(this.tmp.copy(hand.pinchPoint));
+    // Follow the hand while held; on release, judge the drop where the orb was.
+    const held = hand.grabbing && hand.tracked;
+    const local = held ? this.deskRoot.worldToLocal(this.tmp.copy(hand.holdPoint)) : this.tmp.copy(this.orb.position);
     this.orb.position.copy(local);
-    if (!hand.pinching || !hand.tracked) {
+    if (!held) {
       this.carry = null;
       // Decide the drop before `this.tmp` (which holds `local`) is reused.
       this.lastDrop = [+local.x.toFixed(3), +local.y.toFixed(3), +local.z.toFixed(3)];
@@ -247,7 +249,7 @@ export class IntroPrototype implements Prototype {
         this.orb.position.copy(RING).setY(0.02);
         this.complete(RING);
       } else {
-        Sfx.error(hand.pinchPoint);
+        Sfx.error(hand.holdPoint);
       }
     }
   }
@@ -304,7 +306,7 @@ export class IntroPrototype implements Prototype {
         this.pulse.position.set(BUTTON.x, 0.003, BUTTON.z);
         break;
       case 'carry': {
-        // Pinch at the orb, arc over, release in the ring.
+        // Grab at the orb, arc over, release in the ring.
         const k = Math.min(1, Math.max(0, (cycle - 0.15) / 0.7));
         this.ghost.position.lerpVectors(ORB_HOME, RING, k);
         this.ghost.position.y = ORB_HOME.y + Math.sin(k * Math.PI) * 0.08 + 0.015;
@@ -330,7 +332,7 @@ export class IntroPrototype implements Prototype {
     const mouse = !this.ctx.immersive;
     const copy: Record<Step, [string, string]> = {
       poke: ['Poke the button', mouse ? 'Click the glowing button.' : 'Press it with your index fingertip.'],
-      carry: ['Pinch and carry', mouse ? 'Drag the orb into the ring.' : 'Pinch the orb, carry it into the ring, let go.'],
+      carry: ['Grab and carry', mouse ? 'Drag the orb into the ring.' : 'Grab the orb with thumb + middle finger, carry it into the ring, let go.'],
       twist: ['Pinch and twist', mouse ? 'Drag around the dial a quarter turn.' : 'Pinch the dial rim and turn it to the mark.'],
       menu: ['Your menu', mouse ? 'In the headset, turn your left palm toward you. Here, use the bar below.' : 'Turn your left palm toward your face.'],
       done: ["You're ready", 'Those four moves work everywhere in the lab.'],
