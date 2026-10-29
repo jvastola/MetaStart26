@@ -9,6 +9,7 @@
  */
 
 import type { Group, PerspectiveCamera, Scene, Vector3, WebGLRenderer, World } from '@iwsdk/core';
+import type { Album } from './camera-frame.js';
 import type { HandState, Hands } from './hands.js';
 
 export interface LabContext {
@@ -35,6 +36,10 @@ export interface LabContext {
   setMousePlane(point: Vector3, normal: Vector3): void;
   toast(text: string): void;
   goHome(): void;
+  /** Shots taken anywhere in the lab. */
+  readonly album: Album;
+  /** Render a shot from `eye` toward `target` into the album; returns its caption. */
+  capture(eye: Vector3, target: Vector3, fov: number): string;
 }
 
 export interface Prototype {
@@ -52,6 +57,8 @@ export interface Prototype {
   enter(): void;
   exit(): void;
   update(dt: number): void;
+  /** True while the prototype owns the pinches (holding, drawing...): the host then skips the frame gesture. */
+  holding?(): boolean;
   /** Snapshot for automated tests. */
   debugState?(): unknown;
   /** Test helpers callable from the browser console. */

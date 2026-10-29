@@ -283,6 +283,12 @@ export const Sfx = {
     bell(783.99, 0.14, 0.1, at);
     bell(1046.5, 0.24, 0.08, at);
   },
+  /** Camera shutter: a sharp click and a short mechanical rattle. */
+  shutter(at?: Where): void {
+    log('shutter');
+    noise({ band: 4200, q: 1.5, decay: 0.035, gain: 0.35, at, reverb: 0.05 });
+    noise({ band: 1800, q: 2, decay: 0.07, gain: 0.18, start: 0.05, at, reverb: 0.05 });
+  },
   /** Tutorial step complete: two rising notes. */
   step(at?: Where): void {
     log('step');

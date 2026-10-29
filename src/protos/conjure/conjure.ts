@@ -26,13 +26,14 @@ import {
 import { Burst } from '../../core/burst.js';
 import type { LabContext, Prototype } from '../../core/context.js';
 import { ACCENTS, blobShadow } from '../../core/art.js';
+import { HeldPose } from '../../core/grab.js';
 import { type HandState, pointerDistance } from '../../core/hands.js';
 import { CanvasPanel } from '../../core/panel.js';
 import { Sfx } from '../../core/sfx.js';
 import { Voice } from '../../core/voice.js';
 import { parseIntent } from './intent.js';
 import { buildFromPrompt } from './kit.js';
-import { gen3dEndpoint, pollJob, type Provider, startJob } from './remote.js';
+import { availableProviders, pollJob, type Provider, startJob } from './remote.js';
 
 type Source = 'sketch' | Provider;
 
@@ -52,7 +53,7 @@ interface Item {
 interface Hold {
   item: Item;
   hand: HandState;
-  offset: Vector3;
+  pose: HeldPose;
 }
 
 const PEDESTAL = new Vector3(0, 0.014, 0);
@@ -123,10 +124,14 @@ export class ConjurePrototype implements Prototype {
     this.panel.onPress = (id) => this.onButton(id);
     this.deskRoot.add(this.panel.mesh);
 
-    this.provider = gen3dEndpoint() ? 'meshy' : 'sketch';
+    this.provider = availableProviders()[0] ?? 'sketch';
   }
 
   enter(): void {
+    // Keys may have been added or removed in Settings since last time.
+    const available = availableProviders();
+    if (this.provider !== 'sketch' && !available.includes(this.provider)) this.provider = available[0] ?? 'sketch';
+    if (this.provider === 'sketch' && available.length > 0 && this.items.length === 0) this.provider = available[0];
     this.status = this.items.length === 0 ? 'Say what you want, or pinch an idea below.' : this.status;
     this.refresh();
   }
@@ -135,6 +140,10 @@ export class ConjurePrototype implements Prototype {
     this.holds = [];
     this.twoHand = null;
     this.voice.stop();
+  }
+
+  holding(): boolean {
+    return this.holds.length > 0;
   }
 
   // ------------------------------------------------------------ intents
@@ -198,17 +207,15 @@ export class ConjurePrototype implements Prototype {
   }
 
   private async generateRemote(item: Item, provider: Provider): Promise<void> {
-    const endpoint = gen3dEndpoint();
-    if (!endpoint) return;
     const token = ++this.token;
     this.generating = { item, progress: 0, token };
     this.status = `Asking ${provider} for "${item.prompt}"...`;
     try {
-      const id = await startJob(endpoint, provider, item.prompt);
+      const id = await startJob(provider, item.prompt);
       for (let i = 0; i < 180; i += 1) {
         await new Promise((r) => setTimeout(r, 2000));
         if (this.generating?.token !== token) return;
-        const job = await pollJob(endpoint, provider, id);
+        const job = await pollJob(provider, id);
         this.generating.progress = job.progress;
         if (job.status === 'failed') throw new Error(job.error ?? 'generation failed');
         if (job.status === 'succeeded' && job.modelUrl) {
@@ -317,8 +324,10 @@ export class ConjurePrototype implements Prototype {
           startYaw: item.holder.rotation.y,
         };
       }
-      const world = item.holder.getWorldPosition(new Vector3());
-      this.holds.push({ item, hand, offset: world.sub(hand.pinchPoint) });
+      // Turning your wrist turns the object while you hold it.
+      const pose = new HeldPose();
+      pose.begin(hand, item.holder);
+      this.holds.push({ item, hand, pose });
       Sfx.pinch(hand.pinchPoint);
     }
 
@@ -346,9 +355,7 @@ export class ConjurePrototype implements Prototype {
         continue;
       }
       if (this.twoHand?.item === hold.item) continue;
-      this.tmp.copy(hold.hand.pinchPoint).add(hold.offset);
-      this.deskRoot.worldToLocal(this.tmp);
-      hold.item.holder.position.copy(this.tmp);
+      hold.pose.apply(hold.hand, hold.item.holder);
     }
   }
 
@@ -424,12 +431,13 @@ export class ConjurePrototype implements Prototype {
   }
 
   private cycleProvider(): void {
-    if (!gen3dEndpoint()) {
+    const available = availableProviders();
+    if (available.length === 0) {
       this.provider = 'sketch';
-      this.status = 'AI generation is off: no endpoint configured (see README). Sketches still work offline.';
+      this.status = 'AI is off. To use Meshy or Tripo, open Settings on the page (before entering MR) and add your API key. Sketches work offline.';
       return;
     }
-    const order: Source[] = ['sketch', 'meshy', 'tripo'];
+    const order: Source[] = ['sketch', ...available];
     this.provider = order[(order.indexOf(this.provider) + 1) % order.length];
     this.status = this.provider === 'sketch' ? 'Offline sketches only.' : `Using ${this.provider} for full models.`;
   }
@@ -456,7 +464,7 @@ export class ConjurePrototype implements Prototype {
 
   debugState(): unknown {
     return {
-      items: this.items.map((i) => ({ prompt: i.prompt, recipe: i.recipe, source: i.source, free: i.free, scale: +i.holder.scale.x.toFixed(2), children: i.content.children.length })),
+      items: this.items.map((i) => ({ prompt: i.prompt, recipe: i.recipe, source: i.source, free: i.free, scale: +i.holder.scale.x.toFixed(2), yaw: +i.holder.rotation.y.toFixed(2), pitch: +i.holder.rotation.x.toFixed(2), children: i.content.children.length })),
       provider: this.provider,
       status: this.status,
       holding: this.holds.length,

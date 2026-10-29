@@ -36,6 +36,7 @@ export const ACCENTS = {
   shotboard: '#ffcf70',
   clay: '#ff9a76',
   golf: '#8fd1ff',
+  sketch: '#ff9ad5',
   intro: '#9fc7ff',
 } as const;
 

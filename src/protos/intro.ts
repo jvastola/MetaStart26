@@ -158,6 +158,10 @@ export class IntroPrototype implements Prototype {
     }
   }
 
+  holding(): boolean {
+    return this.carry != null || this.twist != null;
+  }
+
   update(dt: number): void {
     this.stepTime += dt;
     this.panel.update(this.ctx.pointers, dt);

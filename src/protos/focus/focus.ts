@@ -31,6 +31,7 @@ import {
   Vector3,
 } from '@iwsdk/core';
 import { Burst } from '../../core/burst.js';
+import { HeldPose } from '../../core/grab.js';
 import type { LabContext, Prototype } from '../../core/context.js';
 import { ACCENTS, blobShadow } from '../../core/art.js';
 import type { HandState } from '../../core/hands.js';
@@ -39,21 +40,26 @@ import { Sfx } from '../../core/sfx.js';
 import { Voice } from '../../core/voice.js';
 import { BOARD_ZONES, type Card, FocusStore, type Zone } from './focus-store.js';
 
-const CARD_W = 0.09;
-const CARD_H = 0.055;
-const BOARD_W = 0.66;
-const BOARD_H = 0.42;
-const COLUMN_X: Record<string, number> = { inbox: -0.22, today: 0, done: 0.22 };
-const SLOT_TOP = 0.095;
-const SLOT_STEP = 0.064;
-const MAX_SLOTS = 4;
+// Everything you touch sits within arm's reach on the desk: the planner
+// stands at the back like a lectern, the pad, dial and tray at the front.
+const CARD_W = 0.072;
+const CARD_H = 0.044;
+const BOARD_W = 0.44;
+const BOARD_H = 0.25;
+const COLUMN_X: Record<string, number> = { inbox: -0.145, today: 0, done: 0.145 };
+const SLOT_TOP = 0.045;
+const SLOT_STEP = 0.05;
+const MAX_SLOTS = 3;
+/** Planner pose in desk space: centre and backward tilt. */
+const PLANNER_POS = new Vector3(0, 0.1, -0.12);
+const PLANNER_TILT = -0.75;
 const GRAB_RADIUS = 0.05;
 const FLICK_SPEED = 1.1;
 
-const PAD = new Vector3(0, 0, 0.02);
-const DIAL = new Vector3(0.19, 0, 0.03);
-const TRAY = new Vector3(-0.19, 0, 0.03);
-const PLANT = new Vector3(0.3, 0, -0.12);
+const PAD = new Vector3(0, 0, 0.075);
+const DIAL = new Vector3(0.2, 0, 0.065);
+const TRAY = new Vector3(-0.2, 0, 0.065);
+const PLANT = new Vector3(-0.33, 0, -0.1);
 
 const SAMPLE_TASKS = ['Water the plants', 'Read ten pages', 'Tidy the desk', 'Write a thank-you note', 'Plan the weekend'];
 
@@ -113,7 +119,7 @@ class CardView {
 interface Hold {
   view: CardView;
   hand: HandState;
-  offset: Vector3;
+  pose: HeldPose;
   from: Zone;
 }
 
@@ -136,6 +142,9 @@ export class FocusPrototype implements Prototype {
   private cards = new Group();
   private board!: CanvasPanel;
   private panel!: CanvasPanel;
+  private glance!: CanvasPanel;
+  private glanceKey = '';
+  private readonly planner = new Group();
   private dial!: Group;
   private dialFace!: { canvas: HTMLCanvasElement; texture: CanvasTexture };
   private dialKnob!: Mesh;
@@ -166,10 +175,22 @@ export class FocusPrototype implements Prototype {
     this.tilt.setFromAxisAngle(new Vector3(1, 0, 0), -1.05);
 
     // Wall: the Today board.
-    this.board = new CanvasPanel({ width: BOARD_W, height: BOARD_H, columns: 1 });
-    this.board.mesh.name = 'FocusBoard';
+    this.board = new CanvasPanel({ width: BOARD_W, height: BOARD_H, columns: 1, ppm: 2200 });
+    this.board.mesh.name = 'FocusPlanner';
     this.board.drawExtra = (c, area) => this.drawColumns(c, area);
-    this.wallRoot.add(this.board.mesh);
+    this.planner.position.copy(PLANNER_POS);
+    this.planner.rotation.x = PLANNER_TILT;
+    this.planner.add(this.board.mesh);
+    const stand = new Mesh(new BoxGeometry(BOARD_W, 0.008, 0.02), new MeshStandardMaterial({ color: '#2a2e36', roughness: 0.6 }));
+    stand.position.set(0, -BOARD_H / 2 - 0.004, -0.005);
+    this.planner.add(stand);
+    this.deskRoot.add(this.planner);
+
+    // Wall: a read-only glance display (big timer, progress, streak).
+    this.glance = new CanvasPanel({ width: 0.5, height: 0.28, columns: 1, accent: this.accent });
+    this.glance.mesh.name = 'FocusGlance';
+    this.glance.drawExtra = (c, area) => this.drawGlance(c, area);
+    this.wallRoot.add(this.glance.mesh);
 
     // Desk: pad, dial, tray, plant, control panel.
     this.buildDesk();
@@ -178,8 +199,9 @@ export class FocusPrototype implements Prototype {
 
     this.panel = new CanvasPanel({ width: 0.36, height: 0.13, columns: 4, buttonHeight: 0.034 });
     this.panel.mesh.name = 'FocusPanel';
-    this.panel.mesh.position.set(0, 0.075, -0.17);
-    this.panel.mesh.rotation.x = -0.3;
+    // Beside the planner, angled toward the user.
+    this.panel.mesh.position.set(0.37, 0.1, -0.02);
+    this.panel.mesh.rotation.set(-0.25, -0.5, 0, 'YXZ');
     this.panel.onPress = (id) => this.onButton(id);
     this.deskRoot.add(this.panel.mesh);
 
@@ -266,6 +288,7 @@ export class FocusPrototype implements Prototype {
     const { pointers } = this.ctx;
     this.panel.update(pointers, dt);
     this.board.update([], dt);
+    this.glance.update([], dt);
 
     this.updateTimer(dt);
     this.updateGestures();
@@ -388,9 +411,10 @@ export class FocusPrototype implements Prototype {
       const view = this.nearestCard(hand);
       if (!view) continue;
       this.cards.updateMatrixWorld(true);
-      const world = view.mesh.getWorldPosition(new Vector3());
-      const offset = hand.isMouse ? new Vector3() : world.sub(hand.pinchPoint);
-      this.holds.push({ view, hand, offset, from: view.card.zone });
+      // The card follows your hand, including its rotation.
+      const pose = new HeldPose();
+      pose.begin(hand, view.mesh);
+      this.holds.push({ view, hand, pose, from: view.card.zone });
       if (hand.isMouse) {
         // Drag the card on a plane facing the camera through its position.
         this.ctx.camera.getWorldDirection(this.tmp2).negate();
@@ -455,9 +479,9 @@ export class FocusPrototype implements Prototype {
       return;
     }
     // On the board: which column?
-    this.wallRoot.updateMatrixWorld(true);
-    const w = this.wallRoot.worldToLocal(world.clone());
-    if (Math.abs(w.z) < 0.15 && Math.abs(w.x) < BOARD_W / 2 + 0.04 && Math.abs(w.y) < BOARD_H / 2 + 0.06) {
+    this.planner.updateMatrixWorld(true);
+    const w = this.planner.worldToLocal(world.clone());
+    if (Math.abs(w.z) < 0.1 && Math.abs(w.x) < BOARD_W / 2 + 0.04 && Math.abs(w.y) < BOARD_H / 2 + 0.06) {
       const zone = BOARD_ZONES.reduce((a, z) => (Math.abs(COLUMN_X[z] - w.x) < Math.abs(COLUMN_X[a] - w.x) ? z : a));
       if (zone === 'done') this.completeCard(id);
       else {
@@ -481,12 +505,12 @@ export class FocusPrototype implements Prototype {
       return this.tmp2.copy(rayOrigin).addScaledVector(rayDir, along).distanceTo(p);
     };
     this.deskRoot.updateMatrixWorld(true);
-    this.wallRoot.updateMatrixWorld(true);
+    this.planner.updateMatrixWorld(true);
     // [zone, point, tall]: board columns are tall, so only their x distance counts.
     const targets: [Zone, Vector3, boolean][] = [
       ['focus', this.deskRoot.localToWorld(PAD.clone().setY(0.02)), false],
       ['done', this.deskRoot.localToWorld(TRAY.clone().setY(0.02)), false],
-      ...BOARD_ZONES.map((z) => [z, this.wallRoot.localToWorld(new Vector3(COLUMN_X[z], 0, 0.01)), true] as [Zone, Vector3, boolean]),
+      ...BOARD_ZONES.map((z) => [z, this.planner.localToWorld(new Vector3(COLUMN_X[z], 0, 0.01)), true] as [Zone, Vector3, boolean]),
     ];
     let best: Zone | null = null;
     let bestDist = Infinity;
@@ -552,7 +576,7 @@ export class FocusPrototype implements Prototype {
   /** Ease every card toward its zone slot (or the hand holding it). */
   private layoutCards(dt: number): void {
     this.cards.updateMatrixWorld(true);
-    this.wallRoot.updateMatrixWorld(true);
+    this.planner.updateMatrixWorld(true);
     this.cards.getWorldQuaternion(this.parentQuatInv).invert();
     const counts: Record<string, number> = { inbox: 0, today: 0, done: 0 };
     const k = 1 - Math.exp(-dt * 12);
@@ -562,10 +586,9 @@ export class FocusPrototype implements Prototype {
       if (!view) continue;
       const hold = this.holds.find((h) => h.view === view);
       if (hold) {
-        // Follow the hand, facing the viewer.
-        this.tmp.copy(hold.hand.pinchPoint).add(hold.offset);
-        this.faceHead(this.tmp, this.tmpQ);
-        this.toCardsSpace(this.tmp, this.tmpQ, view);
+        hold.pose.apply(hold.hand, view.mesh);
+        view.targetPos.copy(view.mesh.position);
+        view.targetQuat.copy(view.mesh.quaternion);
       } else if (card.zone === 'focus') {
         view.targetPos.set(PAD.x, 0.03, PAD.z);
         view.targetQuat.copy(this.tilt);
@@ -574,8 +597,8 @@ export class FocusPrototype implements Prototype {
         const visible = Math.min(slot, MAX_SLOTS - 1);
         const over = Math.max(0, slot - (MAX_SLOTS - 1));
         this.tmp.set(COLUMN_X[card.zone], SLOT_TOP - visible * SLOT_STEP - over * 0.004, 0.006 + over * 0.0015);
-        this.wallRoot.localToWorld(this.tmp);
-        this.wallRoot.getWorldQuaternion(this.tmpQ);
+        this.planner.localToWorld(this.tmp);
+        this.planner.getWorldQuaternion(this.tmpQ);
         this.toCardsSpace(this.tmp, this.tmpQ, view);
         view.mesh.visible = slot < MAX_SLOTS + 3;
       }
@@ -596,10 +619,6 @@ export class FocusPrototype implements Prototype {
     view.targetQuat.copy(this.parentQuatInv).multiply(worldQuat);
   }
 
-  private faceHead(at: Vector3, out: Quaternion): void {
-    const yaw = Math.atan2(this.ctx.head.x - at.x, this.ctx.head.z - at.z);
-    out.setFromAxisAngle(this.tmp2.set(0, 1, 0), yaw);
-  }
 
   private deskLocal(world: Vector3, out: Vector3): Vector3 {
     out.copy(world);
@@ -654,6 +673,41 @@ export class FocusPrototype implements Prototype {
     this.ctx.toast(message);
   }
 
+  holding(): boolean {
+    return this.holds.length > 0 || this.twist != null;
+  }
+
+  /** The wall display: read from across the room, never touched. */
+  private drawGlance(ctx: CanvasRenderingContext2D, area: { x: number; y: number; w: number; h: number }): void {
+    const focus = this.store.focusCard;
+    const time = this.remaining > 0 ? formatTime(this.remaining) : `${this.store.data.focusMinutes}:00`;
+    const done = this.store.doneToday();
+    const today = this.store.zone('today').length + (focus ? 1 : 0) + done;
+    const streak = this.store.currentStreak();
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = this.running ? '#ff8a80' : THEME.text;
+    ctx.font = `700 ${area.h * 0.42}px system-ui, sans-serif`;
+    ctx.fillText(time, area.x, area.y);
+    ctx.fillStyle = THEME.dim;
+    ctx.font = `500 ${area.h * 0.11}px system-ui, sans-serif`;
+    const title = focus ? (this.running ? `Focusing: ${focus.text}` : `Up next: ${focus.text}`) : 'Put a card on the focus pad';
+    ctx.fillText(wrap(ctx, title, area.w)[0] ?? '', area.x, area.y + area.h * 0.5);
+    // Progress bar and streak.
+    const y = area.y + area.h * 0.72;
+    const barW = area.w * 0.62;
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    roundRect(ctx, area.x, y, barW, area.h * 0.09, area.h * 0.045);
+    ctx.fill();
+    ctx.fillStyle = this.accent;
+    roundRect(ctx, area.x, y, Math.max(area.h * 0.09, (barW * done) / Math.max(1, today)), area.h * 0.09, area.h * 0.045);
+    ctx.fill();
+    ctx.fillStyle = THEME.text;
+    ctx.font = `600 ${area.h * 0.1}px system-ui, sans-serif`;
+    ctx.fillText(`${done}/${today} done`, area.x + barW + area.w * 0.03, y - area.h * 0.01);
+    ctx.fillStyle = THEME.dim;
+    ctx.fillText(`Streak: ${streak} day${streak === 1 ? '' : 's'}`, area.x, y + area.h * 0.14);
+  }
+
   private mode(): { eyebrow: string; hint: string } {
     const hour = new Date().getHours();
     if (hour < 12) return { eyebrow: 'Morning plan', hint: 'Move up to 3 cards from Inbox to Today, then put one on the focus pad.' };
@@ -665,11 +719,13 @@ export class FocusPrototype implements Prototype {
     const { eyebrow, hint } = this.mode();
     const streak = this.store.currentStreak();
     const doneToday = this.store.doneToday();
-    this.board.setText(
-      `${eyebrow} - streak ${streak} day${streak === 1 ? '' : 's'} - ${doneToday} done today`,
-      'Today board',
-      '',
-    );
+    this.board.setText(`${eyebrow} - ${doneToday} done today`, '', '');
+    this.glance.setText(`Desk Focus - ${eyebrow}`, '', '');
+    const glanceKey = `${Math.ceil(this.remaining)}|${this.running}|${this.store.focusCard?.id}|${doneToday}|${streak}|${this.store.data.focusMinutes}|${this.store.zone('today').length}`;
+    if (glanceKey !== this.glanceKey) {
+      this.glanceKey = glanceKey;
+      this.glance.invalidate();
+    }
     const focus = this.store.focusCard;
     let body = hint;
     if (this.listening) body = `Listening: ${this.listening}`;
@@ -790,8 +846,8 @@ export class FocusPrototype implements Prototype {
     trayWorld: () => this.worldOf(TRAY),
     dialWorld: () => this.worldOf(DIAL),
     columnWorld: (zone: string) => {
-      this.wallRoot.updateMatrixWorld(true);
-      const p = this.wallRoot.localToWorld(new Vector3(COLUMN_X[zone] ?? 0, SLOT_TOP, 0.01));
+      this.planner.updateMatrixWorld(true);
+      const p = this.planner.localToWorld(new Vector3(COLUMN_X[zone] ?? 0, SLOT_TOP, 0.01));
       return { x: p.x, y: p.y, z: p.z };
     },
     press: (id: string) => this.panel.press(id),

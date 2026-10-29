@@ -141,6 +141,10 @@ export class ClayPrototype implements Prototype {
     this.save();
   }
 
+  holding(): boolean {
+    return this.pulls.length > 0 || this.spin != null || this.touching;
+  }
+
   update(dt: number): void {
     this.panel.update(this.ctx.pointers, dt);
     this.updateGestures();

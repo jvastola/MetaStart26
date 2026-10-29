@@ -25,6 +25,8 @@ import {
   XRPlane,
 } from '@iwsdk/core';
 import { DeskMat, HandCursor, HandSkeleton } from './core/art.js';
+import { Album, FrameCamera } from './core/camera-frame.js';
+import { openSettings } from './core/settings-ui.js';
 import { type LabContext, type Prototype, store } from './core/context.js';
 import { HandState, Hands } from './core/hands.js';
 import { CanvasPanel } from './core/panel.js';
@@ -37,6 +39,7 @@ import { GolfPrototype } from './protos/golf/golf.js';
 import { HubPrototype } from './protos/hub.js';
 import { INTRO_DONE_KEY, IntroPrototype } from './protos/intro.js';
 import { ShotBoardPrototype } from './protos/shotboard/shotboard.js';
+import { SketchPrototype } from './protos/sketch/sketch.js';
 
 const DESKTOP_DESK = new Vector3(0, 0.75, -0.5);
 const DESK_KEY = 'lab-desk-v1';
@@ -52,6 +55,8 @@ export class LabSystem extends createSystem({
 }) {
   private ctx!: LabContext & { immersive: boolean; time: number; pointers: readonly HandState[]; wristMenuOpen: boolean };
   private mat!: DeskMat;
+  private album = new Album();
+  private frame!: FrameCamera;
   private cursors: HandCursor[] = [];
   private skeletons: HandSkeleton[] = [];
   private coach!: CanvasPanel;
@@ -127,7 +132,11 @@ export class LabSystem extends createSystem({
       },
       toast: (text: string) => this.toast(text),
       goHome: () => this.go('hub'),
+      album: this.album,
+      capture: (eye: Vector3, target: Vector3, fov: number) => this.shoot(eye, target, fov),
     };
+    this.frame = new FrameCamera(this.renderer, this.scene, this.album);
+    this.world.createTransformEntity(this.frame.line);
 
     this.buildChrome();
     this.setupMouse();
@@ -139,6 +148,7 @@ export class LabSystem extends createSystem({
       new ConjurePrototype(),
       new ShotBoardPrototype(),
       new ClayPrototype(),
+      new SketchPrototype(),
       new GolfPrototype(),
       new IntroPrototype(() => this.go('hub')),
     ];
@@ -415,7 +425,23 @@ export class LabSystem extends createSystem({
     }
     this.updateWristMenu(dt);
     this.updateCoach(dt);
+    // The director's frame works in every prototype, unless it owns the pinches.
+    const frameEnabled = this.ctx.immersive && !this.wristOpen && !(this.active?.holding?.() ?? false);
+    const caption = this.frame.update(this.hands.left, this.hands.right, this.head, frameEnabled, dt);
+    if (caption) this.afterShot(caption);
     this.active?.update(dt);
+  }
+
+  /** Capture from code (Snap view, tests) with the same feedback as the gesture. */
+  private shoot(eye: Vector3, target: Vector3, fov: number): string {
+    const caption = this.frame.capture(eye, target, fov);
+    this.afterShot(caption);
+    return caption;
+  }
+
+  private afterShot(caption: string): void {
+    Sfx.shutter();
+    this.toast(`Shot ${this.album.shots.length} saved (${caption}). See it in Shot Board.`);
   }
 
   /** First-visit how-to card for a prototype (and on demand from the wrist menu). */
@@ -677,6 +703,16 @@ export class LabSystem extends createSystem({
       b.addEventListener('click', () => this.go(p.id));
       nav.appendChild(b);
     });
+    const gear = document.createElement('button');
+    gear.textContent = 'Settings';
+    gear.style.cssText = 'border:1px solid #3a3f4a;border-radius:8px;padding:6px 10px;background:#2b2f38;color:#eef0f3;cursor:pointer';
+    gear.addEventListener('click', () =>
+      openSettings(() => {
+        // Let Conjure pick up new keys straight away.
+        if (this.active?.id === 'conjure') this.active.enter();
+      }),
+    );
+    nav.appendChild(gear);
     document.body.appendChild(nav);
     this.nav = nav;
     this.updateDomNav();
@@ -698,6 +734,8 @@ export class LabSystem extends createSystem({
       active: () => this.active?.id,
       setup: () => this.setup,
       wrist: () => this.ctx.wristMenuOpen,
+      shots: () => this.album.shots.map((s) => s.caption),
+      framing: () => this.frame.active,
       button: (id: string) => {
         for (const panel of CanvasPanel.all) {
           const p = panel.buttonWorld(id);

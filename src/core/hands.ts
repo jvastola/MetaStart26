@@ -13,7 +13,7 @@
  * driven in a desktop browser without a headset.
  */
 
-import { type Matrix4, Quaternion, Vector3 } from '@iwsdk/core';
+import { Matrix4, Quaternion, Vector3 } from '@iwsdk/core';
 
 /** Thumb-to-index distance that starts a pinch. */
 const PINCH_ON = 0.018;
@@ -79,6 +79,11 @@ export class HandState {
   readonly palm = new Vector3();
   /** Unit vector out of the palm. */
   readonly palmNormal = new Vector3(0, -1, 0);
+  /**
+   * Hand orientation: -Z points along the fingers (wrist to middle knuckle),
+   * +Y out of the back of the hand. Controllers use their grip rotation.
+   */
+  readonly orientation = new Quaternion();
   readonly pinchPoint = new Vector3();
   readonly indexVelocity = new Vector3();
   readonly pinchVelocity = new Vector3();
@@ -103,12 +108,14 @@ export class HandState {
     this.tracked = true;
     this.pinchPoint.copy(this.indexTip).add(this.thumbTip).multiplyScalar(0.5);
     this.palm.copy(this.wrist).add(middleMeta).multiplyScalar(0.5);
+    const forward = handScratch.fwd.copy(middleMeta).sub(this.wrist);
     // Palm normal from the wrist->index and wrist->pinky metacarpal vectors.
     const a = indexMeta.sub(this.wrist);
     const b = pinkyMeta.sub(this.wrist);
     if (this.side === 'right') this.palmNormal.crossVectors(a, b);
     else this.palmNormal.crossVectors(b, a);
     if (this.palmNormal.lengthSq() > 1e-10) this.palmNormal.normalize();
+    setOrientation(this.orientation, forward, this.palmNormal);
 
     if (this.hasLast && dt > 0) {
       const k = 1 - Math.exp(-dt / VELOCITY_TAU);
@@ -144,8 +151,9 @@ export class HandState {
    * Feed a controller as if it were a hand: the "fingertip" sits 5 cm ahead of
    * the grip along the pointing ray, and the trigger is the pinch.
    */
-  feedController(grip: Vector3, forward: Vector3, gamepad: Gamepad | null | undefined, dt: number): void {
+  feedController(grip: Vector3, forward: Vector3, rotation: Quaternion, gamepad: Gamepad | null | undefined, dt: number): void {
     this.isController = true;
+    this.orientation.copy(rotation);
     this.tracked = true;
     const tip = this.indexTip;
     tip.copy(grip).addScaledVector(forward, 0.05);
@@ -201,6 +209,22 @@ export class HandState {
   }
 }
 
+const handScratch = { fwd: new Vector3(), x: new Vector3(), y: new Vector3(), z: new Vector3(), m: new Matrix4() };
+
+/** Orientation from a finger direction and a palm normal (back of hand is +Y). */
+function setOrientation(out: Quaternion, forward: Vector3, palmNormal: Vector3): void {
+  const { x, y, z, m } = handScratch;
+  if (forward.lengthSq() < 1e-10) return;
+  z.copy(forward).normalize().negate();
+  y.copy(palmNormal).negate();
+  y.addScaledVector(z, -y.dot(z));
+  if (y.lengthSq() < 1e-10) return;
+  y.normalize();
+  x.crossVectors(y, z);
+  m.makeBasis(x, y, z);
+  out.setFromRotationMatrix(m);
+}
+
 function smoothVelocity(out: Vector3, now: Vector3, last: Vector3, dt: number, k: number): void {
   out.x += ((now.x - last.x) / dt - out.x) * k;
   out.y += ((now.y - last.y) / dt - out.y) * k;
@@ -216,6 +240,7 @@ export class Hands {
   private readonly seen = { left: false, right: false };
   private readonly meta = [new Vector3(), new Vector3(), new Vector3()];
   private readonly quat = new Quaternion();
+  private readonly playerQuat = new Quaternion();
 
   /**
    * Read joints for this XR frame. `playerMatrix` converts the reference
@@ -246,7 +271,8 @@ export class Hands {
           this.meta[0].set(g.x, g.y, g.z).applyMatrix4(playerMatrix);
           // The ray points down its local -Z.
           this.meta[1].set(0, 0, -1).applyQuaternion(this.quat.set(o.x, o.y, o.z, o.w)).transformDirection(playerMatrix);
-          state.feedController(this.meta[0], this.meta[1], source.gamepad, dt);
+          this.quat.set(o.x, o.y, o.z, o.w).premultiply(this.playerQuat.setFromRotationMatrix(playerMatrix));
+          state.feedController(this.meta[0], this.meta[1], this.quat, source.gamepad, dt);
           this.seen[side] = true;
         }
       }

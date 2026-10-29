@@ -146,6 +146,10 @@ export class GolfPrototype implements Prototype {
     }
   }
 
+  holding(): boolean {
+    return this.dragHand != null;
+  }
+
   update(dt: number): void {
     this.phaseTime += dt;
     this.flickCooldown = Math.max(0, this.flickCooldown - dt);

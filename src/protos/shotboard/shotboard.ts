@@ -2,56 +2,42 @@
  * Shot Board: storyboard a scene by framing shots with your hands.
  *
  * A small set sits on your desk: figures, a tree, a house, a lamp. Pinch a
- * piece to move it around the stage (thumb-swipe or "Turn" to rotate it).
- * To take a shot, pinch with both hands and pull them apart like a
- * director's frame: the rectangle between your pinches becomes the camera
- * frame, seen from your eyes. Release to capture it into the storyboard on
- * your wall. "Snap view" captures straight ahead, for one-handed or
- * desktop use. "Play" runs the board as an animatic.
+ * piece to move it; turn your wrist while holding it to turn it. Frame a
+ * shot anywhere in the lab by pinching with both hands and pulling them
+ * apart (the host owns that gesture); every shot lands in the shared album,
+ * which this board shows on your wall. "Snap view" captures straight ahead
+ * for one-handed or desktop use, and "Play" runs the board as an animatic.
  */
 
 import {
   BoxGeometry,
-  BufferGeometry,
   Color,
   ConeGeometry,
   CylinderGeometry,
-  Float32BufferAttribute,
   Group,
-  LineBasicMaterial,
-  LineLoop,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
-  PerspectiveCamera,
   PlaneGeometry,
   SphereGeometry,
   Vector3,
-  WebGLRenderTarget,
 } from '@iwsdk/core';
-import type { LabContext, Prototype } from '../../core/context.js';
 import { ACCENTS, blobShadow } from '../../core/art.js';
+import { SHOT_H, SHOT_W } from '../../core/camera-frame.js';
+import type { LabContext, Prototype } from '../../core/context.js';
+import { HeldPose } from '../../core/grab.js';
 import { type HandState, pointerDistance } from '../../core/hands.js';
 import { CanvasPanel } from '../../core/panel.js';
 import { Sfx } from '../../core/sfx.js';
 
 const STAGE_W = 0.4;
 const STAGE_D = 0.26;
-const MAX_SHOTS = 6;
-const SHOT_W = 480;
-const SHOT_H = 270;
-const MIN_FRAME = 0.08;
-const UP = new Vector3(0, 1, 0);
+/** The board shows the newest shots. */
+const BOARD_SLOTS = 6;
 
 interface Prop {
   group: Group;
   name: string;
-}
-
-interface Shot {
-  target: WebGLRenderTarget;
-  quad: Mesh;
-  caption: string;
 }
 
 export class ShotBoardPrototype implements Prototype {
@@ -60,9 +46,9 @@ export class ShotBoardPrototype implements Prototype {
   readonly tagline = 'Frame shots with your hands';
   readonly accent = ACCENTS.shotboard;
   readonly howTo = [
-    'Pinch a figure to move it around the stage.',
-    'Pinch with BOTH hands and pull apart to frame a shot.',
-    'Let go to capture. Play runs your storyboard.',
+    'Pinch a figure to move it; turn your wrist to turn it.',
+    'Pinch BOTH hands close together, pull apart to frame a shot.',
+    'Let go to capture. It works anywhere in the lab.',
   ];
   readonly deskRoot = new Group();
   readonly wallRoot = new Group();
@@ -72,17 +58,13 @@ export class ShotBoardPrototype implements Prototype {
   private board!: CanvasPanel;
   private props: Prop[] = [];
   private selected: Prop | null = null;
-  private drag: { prop: Prop; hand: HandState } | null = null;
-  private shots: Shot[] = [];
-  private shotCam = new PerspectiveCamera(50, SHOT_W / SHOT_H, 0.01, 20);
-  private frameLine!: LineLoop;
-  private framing = 0;
+  private drag: { prop: Prop; hand: HandState; pose: HeldPose } | null = null;
+  private quads: Mesh[] = [];
   private playing = -1;
   private playTime = 0;
   private preview!: Mesh;
   private status = '';
   private readonly tmp = new Vector3();
-  private readonly center = new Vector3();
 
   init(ctx: LabContext): void {
     this.ctx = ctx;
@@ -96,22 +78,24 @@ export class ShotBoardPrototype implements Prototype {
     this.panel.onPress = (id) => this.onButton(id);
     this.deskRoot.add(this.panel.mesh);
 
-    // Storyboard on the wall: a 3 x 2 grid of shots.
+    // Storyboard: a 3 x 2 grid of the newest album shots.
     this.board = new CanvasPanel({ width: 0.66, height: 0.38, columns: 1, accent: this.accent });
-    this.board.setText('Storyboard', '', '');
     this.wallRoot.add(this.board.mesh);
+    for (let i = 0; i < BOARD_SLOTS; i += 1) {
+      const quad = new Mesh(new PlaneGeometry(0.19, 0.107), new MeshBasicMaterial({ color: '#ffffff' }));
+      quad.position.set(-0.205 + (i % 3) * 0.205, 0.07 - Math.floor(i / 3) * 0.135, 0.004);
+      quad.userData.hideInShots = true;
+      quad.visible = false;
+      this.wallRoot.add(quad);
+      this.quads.push(quad);
+    }
     this.preview = new Mesh(new PlaneGeometry(0.56, 0.315), new MeshBasicMaterial({ color: '#ffffff' }));
-    this.preview.position.set(0, -0.01, 0.004);
+    this.preview.position.set(0, -0.01, 0.006);
+    this.preview.userData.hideInShots = true;
     this.preview.visible = false;
     this.wallRoot.add(this.preview);
-
-    // Frame rectangle shown while both hands frame a shot.
-    const geometry = new BufferGeometry();
-    geometry.setAttribute('position', new Float32BufferAttribute(new Float32Array(12), 3));
-    this.frameLine = new LineLoop(geometry, new LineBasicMaterial({ color: '#ffcf70' }));
-    this.frameLine.frustumCulled = false;
-    this.frameLine.visible = false;
-    ctx.world.createTransformEntity(this.frameLine);
+    ctx.album.onChange(() => this.layoutShots());
+    this.layoutShots();
   }
 
   private buildStage(): void {
@@ -182,15 +166,18 @@ export class ShotBoardPrototype implements Prototype {
 
   enter(): void {
     this.status = this.ctx.immersive
-      ? 'Pinch with both hands and pull apart to frame a shot. Release to capture.'
+      ? 'Pinch both hands close together and pull apart to frame a shot.'
       : 'Drag pieces on the stage, then Snap view to capture a shot.';
+    this.layoutShots();
     this.refresh();
   }
 
   exit(): void {
     this.drag = null;
-    this.frameLine.visible = false;
-    this.framing = 0;
+  }
+
+  holding(): boolean {
+    return this.drag != null;
   }
 
   update(dt: number): void {
@@ -198,7 +185,6 @@ export class ShotBoardPrototype implements Prototype {
     this.board.update([], dt);
     this.updateGestures();
     this.updateDrag();
-    this.updateFrame(dt);
     this.updatePlayback(dt);
     this.refresh();
   }
@@ -221,13 +207,16 @@ export class ShotBoardPrototype implements Prototype {
 
   private updateDrag(): void {
     const { left, right } = this.ctx.hands;
-    const framingNow = this.ctx.immersive && left.pinching && right.pinching;
+    const bothPinching = this.ctx.immersive && left.pinching && right.pinching;
     if (this.drag == null) {
       for (const hand of this.ctx.pointers) {
-        if (!hand.tracked || !hand.pinchStarted || framingNow || this.panel.contains(hand.pinchPoint)) continue;
+        if (!hand.tracked || !hand.pinchStarted || bothPinching || this.panel.contains(hand.pinchPoint)) continue;
         const prop = this.propNear(hand);
         if (prop) {
-          this.drag = { prop, hand };
+          // Figures stay upright but turn with your wrist.
+          const pose = new HeldPose();
+          pose.begin(hand, prop.group, { upright: true });
+          this.drag = { prop, hand, pose };
           this.selected = prop;
           Sfx.pinch(hand.pinchPoint);
           break;
@@ -242,8 +231,8 @@ export class ShotBoardPrototype implements Prototype {
       Sfx.place(prop.group.getWorldPosition(this.tmp));
       return;
     }
-    this.tmp.copy(hand.pinchPoint);
-    this.deskRoot.worldToLocal(this.tmp);
+    this.drag.pose.apply(hand, prop.group, { upright: true });
+    this.tmp.copy(prop.group.position);
     prop.group.position.set(
       Math.min(STAGE_W / 2 - 0.015, Math.max(-STAGE_W / 2 + 0.015, this.tmp.x)),
       0.018,
@@ -266,160 +255,65 @@ export class ShotBoardPrototype implements Prototype {
     return best;
   }
 
-  // ------------------------------------------------------------ framing
-
-  private updateFrame(dt: number): void {
-    const { left, right } = this.ctx.hands;
-    const active = this.ctx.immersive && this.drag == null && left.tracked && right.tracked && left.pinching && right.pinching;
-    if (active) {
-      this.computeFrame(left.pinchPoint, right.pinchPoint);
-      const big = Math.max(this.frameSize.x, this.frameSize.y) > MIN_FRAME;
-      this.frameLine.visible = big;
-      if (big) {
-        if (this.framing === 0) Sfx.blip(980);
-        this.framing += dt;
-      }
-      return;
-    }
-    if (this.framing > 0.25 && this.frameLine.visible) this.captureFrame();
-    this.framing = 0;
-    this.frameLine.visible = false;
-  }
-
-  /**
-   * Build a frame rectangle facing the head with the two pinch points on
-   * opposite corners, and write its corners into the line geometry.
-   */
-  private computeFrame(p: Vector3, q: Vector3): void {
-    const head = this.ctx.head;
-    this.center.copy(p).add(q).multiplyScalar(0.5);
-    this.fForward.copy(this.center).sub(head).normalize();
-    this.fRight.crossVectors(this.fForward, UP).normalize();
-    this.fUp.crossVectors(this.fRight, this.fForward).normalize();
-    this.tmp.copy(q).sub(p);
-    const w = Math.abs(this.tmp.dot(this.fRight));
-    const h = Math.abs(this.tmp.dot(this.fUp));
-    const pos = this.frameLine.geometry.getAttribute('position') as Float32BufferAttribute;
-    const corners = [-1, -1, 1, -1, 1, 1, -1, 1];
-    for (let i = 0; i < 4; i += 1) {
-      this.tmp
-        .copy(this.center)
-        .addScaledVector(this.fRight, (corners[i * 2] * w) / 2)
-        .addScaledVector(this.fUp, (corners[i * 2 + 1] * h) / 2);
-      pos.setXYZ(i, this.tmp.x, this.tmp.y, this.tmp.z);
-    }
-    pos.needsUpdate = true;
-    this.frameSize.set(w, h, this.center.distanceTo(head));
-  }
-
-  private readonly frameSize = new Vector3();
-  private readonly fForward = new Vector3();
-  private readonly fRight = new Vector3();
-  private readonly fUp = new Vector3();
-
-  private captureFrame(): void {
-    const [w, h, dist] = [this.frameSize.x, this.frameSize.y, this.frameSize.z];
-    const aspect = Math.min(2.4, Math.max(1, w / Math.max(h, 1e-3)));
-    const height = w / aspect;
-    const fov = (2 * Math.atan(height / 2 / Math.max(dist, 0.05)) * 180) / Math.PI;
-    this.capture(this.ctx.head, this.center, Math.min(90, Math.max(12, fov)));
-  }
+  // ------------------------------------------------------------ shots
 
   /** Straight-ahead shot from the current view. */
   private snapView(): void {
     const cam = this.ctx.camera;
-    cam.getWorldDirection(this.tmp);
     const eye = cam.getWorldPosition(new Vector3());
-    this.capture(eye, eye.clone().add(this.tmp), 50);
-  }
-
-  private capture(eye: Vector3, target: Vector3, fov: number): void {
-    if (this.shots.length >= MAX_SHOTS) this.removeShot(0);
-    const renderer = this.ctx.renderer;
-    const scene = this.ctx.scene;
-    const rt = new WebGLRenderTarget(SHOT_W, SHOT_H);
-    this.shotCam.fov = fov;
-    this.shotCam.aspect = SHOT_W / SHOT_H;
-    this.shotCam.position.copy(eye);
-    this.shotCam.lookAt(target);
-    this.shotCam.updateProjectionMatrix();
-    this.shotCam.updateMatrixWorld(true);
-
-    // Hide our UI while rendering, and paint a neutral previs backdrop.
-    const hidden = [this.panel.mesh, this.board.mesh, this.frameLine, this.preview, ...this.shots.map((s) => s.quad)];
-    const was = hidden.map((o) => o.visible);
-    hidden.forEach((o) => (o.visible = false));
-    const background = scene.background;
-    scene.background = new Color('#cdd7e3');
-    const xrEnabled = renderer.xr.enabled;
-    const previous = renderer.getRenderTarget();
-    renderer.xr.enabled = false;
-    renderer.setRenderTarget(rt);
-    renderer.clear();
-    renderer.render(scene, this.shotCam);
-    renderer.setRenderTarget(previous);
-    renderer.xr.enabled = xrEnabled;
-    scene.background = background;
-    hidden.forEach((o, i) => (o.visible = was[i]));
-
-    const caption = fov < 25 ? 'close-up' : fov < 45 ? 'medium' : 'wide';
-    const quad = new Mesh(new PlaneGeometry(0.19, 0.107), new MeshBasicMaterial({ map: rt.texture }));
-    this.wallRoot.add(quad);
-    this.shots.push({ target: rt, quad, caption });
-    this.layoutShots();
-    Sfx.success();
-    this.status = `Shot ${this.shots.length} captured (${caption}).`;
+    const target = eye.clone().add(cam.getWorldDirection(this.tmp));
+    const caption = this.ctx.capture(eye, target, 50);
+    this.status = `Shot ${this.ctx.album.shots.length} captured (${caption}).`;
   }
 
   private layoutShots(): void {
-    this.shots.forEach((shot, i) => {
-      const col = i % 3;
-      const row = Math.floor(i / 3);
-      shot.quad.position.set(-0.205 + col * 0.205, 0.07 - row * 0.135, 0.004);
+    if (!this.board) return;
+    const shots = this.ctx.album.shots.slice(-BOARD_SLOTS);
+    this.quads.forEach((quad, i) => {
+      const shot = shots[i];
+      const material = quad.material as MeshBasicMaterial;
+      quad.visible = shot != null && this.playing < 0;
+      if (shot && material.map !== shot.texture) {
+        material.map = shot.texture;
+        material.needsUpdate = true;
+      }
     });
-    this.board.setText('Storyboard', '', this.shots.map((s, i) => `${i + 1}. ${s.caption}`).join('   ') || 'No shots yet.');
-  }
-
-  private removeShot(index: number): void {
-    const [shot] = this.shots.splice(index, 1);
-    if (!shot) return;
-    this.wallRoot.remove(shot.quad);
-    shot.quad.geometry.dispose();
-    (shot.quad.material as MeshBasicMaterial).dispose();
-    shot.target.dispose();
-    this.layoutShots();
+    const all = this.ctx.album.shots;
+    this.board.setText('Storyboard', '', all.length ? all.slice(-BOARD_SLOTS).map((s, i) => `${i + 1}. ${s.caption}`).join('   ') : 'No shots yet. Frame one with both hands.');
   }
 
   private updatePlayback(dt: number): void {
     if (this.playing < 0) return;
+    const shots = this.ctx.album.shots.slice(-BOARD_SLOTS);
     this.playTime += dt;
     if (this.playTime > 1.6) {
       this.playTime = 0;
       this.playing += 1;
-      if (this.playing >= this.shots.length) {
+      if (this.playing >= shots.length) {
         this.playing = -1;
         this.preview.visible = false;
-        for (const s of this.shots) s.quad.visible = true;
+        this.layoutShots();
         return;
       }
       Sfx.blip(500 + this.playing * 60);
     }
     const material = this.preview.material as MeshBasicMaterial;
-    const shot = this.shots[this.playing];
-    if (shot && material.map !== shot.target.texture) {
-      material.map = shot.target.texture;
+    const shot = shots[this.playing];
+    if (shot && material.map !== shot.texture) {
+      material.map = shot.texture;
       material.needsUpdate = true;
     }
   }
 
   private play(): void {
-    if (this.shots.length === 0) return;
+    if (this.ctx.album.shots.length === 0) return;
     this.playing = 0;
     this.playTime = 0;
     this.preview.visible = true;
-    for (const s of this.shots) s.quad.visible = false;
-    (this.preview.material as MeshBasicMaterial).map = this.shots[0].target.texture;
-    (this.preview.material as MeshBasicMaterial).needsUpdate = true;
+    for (const q of this.quads) q.visible = false;
+    const material = this.preview.material as MeshBasicMaterial;
+    material.map = this.ctx.album.shots.slice(-BOARD_SLOTS)[0].texture;
+    material.needsUpdate = true;
   }
 
   // ------------------------------------------------------------ UI
@@ -427,22 +321,22 @@ export class ShotBoardPrototype implements Prototype {
   private onButton(id: string): void {
     if (id === 'snap') this.snapView();
     if (id === 'turn') this.turnSelected(1);
-    if (id === 'undo') this.removeShot(this.shots.length - 1);
+    if (id === 'undo') this.ctx.album.removeLast();
     if (id === 'play') this.play();
-    if (id === 'home') this.ctx.goHome();
   }
 
   private refresh(): void {
+    const count = this.ctx.album.shots.length;
     this.panel.setText(
-      `Shot Board - ${this.shots.length}/${MAX_SHOTS} shots`,
+      `Shot Board - ${count} shot${count === 1 ? '' : 's'}`,
       '',
-      [this.status, this.selected ? `Selected: ${this.selected.name}. Thumb-swipe or Turn to rotate.` : 'Pinch a piece to move it.'],
+      [this.status, this.selected ? `Holding ${this.selected.name}: turn your wrist to turn it.` : 'Pinch a piece to move it.'],
     );
     this.panel.setButtons([
       { id: 'snap', label: 'Snap view', tone: 'primary' },
       { id: 'turn', label: 'Turn', disabled: !this.selected },
-      { id: 'play', label: this.playing >= 0 ? 'Playing' : 'Play', disabled: this.shots.length === 0 },
-      { id: 'undo', label: 'Undo shot', disabled: this.shots.length === 0 },
+      { id: 'play', label: this.playing >= 0 ? 'Playing' : 'Play', disabled: count === 0 },
+      { id: 'undo', label: 'Undo shot', disabled: count === 0 },
     ]);
   }
 
@@ -450,10 +344,11 @@ export class ShotBoardPrototype implements Prototype {
 
   debugState(): unknown {
     return {
-      shots: this.shots.map((s) => s.caption),
+      shots: this.ctx.album.shots.map((s) => s.caption),
       selected: this.selected?.name ?? null,
-      props: Object.fromEntries(this.props.map((p) => [p.name, [+p.group.position.x.toFixed(3), +p.group.position.z.toFixed(3)]])),
-      framing: this.frameLine.visible,
+      props: Object.fromEntries(
+        this.props.map((p) => [p.name, [+p.group.position.x.toFixed(3), +p.group.position.z.toFixed(3), +p.group.rotation.y.toFixed(2)]]),
+      ),
       playing: this.playing,
     };
   }
@@ -467,8 +362,8 @@ export class ShotBoardPrototype implements Prototype {
       return { x: v.x, y: v.y + 0.03, z: v.z };
     },
     shotPixels: (index: number) => {
-      const shot = this.shots[index];
-      if (!shot) return null;
+      const shot = this.ctx.album.shots[index];
+      if (!shot?.target) return null;
       const buffer = new Uint8Array(4 * 16);
       this.ctx.renderer.readRenderTargetPixels(shot.target, SHOT_W / 2 - 2, SHOT_H / 2 - 2, 4, 4, buffer);
       return Array.from(buffer.slice(0, 8));
