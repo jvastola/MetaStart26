@@ -10,16 +10,18 @@ const OUT = path.join(__dirname, 'out');
 fs.mkdirSync(OUT, { recursive: true });
 
 (async () => {
+  // IWER's own helper turns "fingers point here, palm faces there" into a wrist rotation,
+  // so the emulated hands look like real hands reaching toward the desk.
+  const { wristRotationFromDirections } = await import(path.join(__dirname, '../../node_modules/iwer/lib/device/XRHandInput.js'));
+  const norm = (v) => { const l = Math.hypot(...v) || 1; return v.map((x) => x / l); };
+  const wrist = (side, fingers, palm) => Array.from(wristRotationFromDirections({ fingers: norm(fingers), palm: norm(palm) }, side));
+
   // CHROMIUM_PATH lets you use an already-installed Chromium instead of Playwright's download.
   const browser = await chromium.launch({
     executablePath: process.env.CHROMIUM_PATH || undefined,
     args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
   });
-  const context = await browser.newContext({
-    viewport: { width: 1280, height: 720 },
-    ignoreHTTPSErrors: true,
-    recordVideo: { dir: OUT, size: { width: 1280, height: 720 } },
-  });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, ignoreHTTPSErrors: true, recordVideo: { dir: OUT, size: { width: 1280, height: 720 } } });
   await context.addInitScript(() => { window.__sfxLog = []; });
   const t0 = Date.now();
   const page = await context.newPage();
@@ -42,14 +44,24 @@ fs.mkdirSync(OUT, { recursive: true });
   const hideChrome = () => page.evaluate(() => {
     const overlay = document.body.lastElementChild;
     for (const el of overlay.children) { const z = getComputedStyle(el).zIndex; if (z === '5' || z === '3') el.style.display = 'none'; }
-    for (const el of document.body.children) if (getComputedStyle(el).zIndex === '10') el.style.display = 'none';
+    for (const el of document.body.children) if (['10', '11'].includes(getComputedStyle(el).zIndex)) el.style.display = 'none';
   });
 
-  // Hands: pinned by the index fingertip, moved with eased glides.
+  // ---------------------------------------------------------------- hand helpers
+  let fwd = [0, 0, 1];
+  const rest = { left: null, right: null };
+  const pose = (side, kind) => {
+    const [fx, , fz] = fwd;
+    if (kind === 'poke') return wrist(side, [fx * 0.55, -0.85, fz * 0.55], [fx * 0.2, -0.3, fz * 0.2 - 0.0001]);
+    if (kind === 'frame') return wrist(side, [fx * 0.6, 0.75, fz * 0.6], [side === 'left' ? fz : -fz, 0, side === 'left' ? -fx : fx]);
+    return wrist(side, [fx, -0.35, fz], [0, -1, 0]); // reach: fingers toward the desk, palm down
+  };
   const pos = { left: null, right: null };
+  const quat = { left: null, right: null };
   const pin = (side, p, q) => {
     pos[side] = p;
-    return page.evaluate(([side, p, q]) => window.IWER_DEVICE.hands[side].setPin({ anchor: 'index-tip', target: [p.x, p.y, p.z], ...(q ? { wristRotation: q } : {}) }), [side, p, q]);
+    if (q) quat[side] = q;
+    return page.evaluate(([side, p, q]) => window.IWER_DEVICE.hands[side].setPin({ anchor: 'index-tip', target: [p.x, p.y, p.z], ...(q ? { wristRotation: q } : {}) }), [side, p, quat[side]]);
   };
   const glide = async (side, to, ms = 700, q) => {
     const from = pos[side] ?? to;
@@ -68,22 +80,26 @@ fs.mkdirSync(OUT, { recursive: true });
   };
   const desk = (x, y, z) => lab('deskToWorld', x, y, z);
   const add = (p, n, d) => ({ x: p.x + n.x * d, y: p.y + n.y * d, z: p.z + n.z * d });
-  const rest = async () => {
-    await Promise.all([glide('right', await desk(0.26, 0.05, 0.17), 600), glide('left', await desk(-0.26, 0.05, 0.17), 600)]);
+  const toRest = async () => {
+    await Promise.all([glide('right', rest.right, 550, pose('right', 'reach')), glide('left', rest.left, 550, pose('left', 'reach'))]);
+  };
+  const pokeAt = async (b, side = 'right') => {
+    const n = { x: b.nx, y: b.ny, z: b.nz };
+    const q = pose(side, 'poke');
+    await glide(side, add(b, n, 0.06), 600, q);
+    await glide(side, add(b, n, -0.012), 350, q);
+    await wait(250);
+    await glide(side, add(b, n, 0.07), 350, q);
   };
   const poke = async (id, side = 'right') => {
     const b = await lab('button', id);
-    if (!b) { console.log('no button', id); return; }
-    const n = { x: b.nx, y: b.ny, z: b.nz };
-    await glide(side, add(b, n, 0.06), 650);
-    await glide(side, add(b, n, -0.012), 350);
-    await wait(250);
-    await glide(side, add(b, n, 0.07), 350);
+    if (b) await pokeAt(b, side);
+    else console.log('no button', id);
   };
-  const lookAt = (target) => remote('look_at', { device: 'headset', target });
   const carry = async (side, from, to, lift = 0.05) => {
-    await glide(side, { x: from.x, y: from.y + 0.05, z: from.z }, 650);
-    await glide(side, from, 300);
+    const q = pose(side, 'reach');
+    await glide(side, { x: from.x, y: from.y + 0.05, z: from.z }, 600, q);
+    await glide(side, from, 300, q);
     await pinch(side, true);
     const mid = { x: (from.x + to.x) / 2, y: Math.max(from.y, to.y) + lift, z: (from.z + to.z) / 2 };
     await glide(side, mid, 450);
@@ -94,7 +110,7 @@ fs.mkdirSync(OUT, { recursive: true });
   };
   const twist = async (side, centerLocal, radius, turns = 0.28) => {
     const rim = (a) => desk(centerLocal[0] + Math.sin(a) * radius, centerLocal[1], centerLocal[2] + Math.cos(a) * radius);
-    await glide(side, await rim(Math.PI), 600);
+    await glide(side, await rim(Math.PI), 600, pose(side, 'reach'));
     await pinch(side, true);
     for (let i = 1; i <= 16; i++) { await pin(side, await rim(Math.PI - (i / 16) * Math.PI * 2 * turns)); await wait(70); }
     await pinch(side, false);
@@ -102,10 +118,11 @@ fs.mkdirSync(OUT, { recursive: true });
   const openPalm = async () => {
     const view = await lab('view');
     const h = { x: view.head[0], y: view.head[1], z: view.head[2] };
-    const f = { x: view.forward[0], y: 0, z: view.forward[2] };
+    const f = { x: view.forward[0], z: view.forward[2] };
     const fl = Math.hypot(f.x, f.z); f.x /= fl; f.z /= fl;
-    const at = { x: h.x + f.x * 0.32 - f.z * 0.07, y: h.y - 0.14, z: h.z + f.z * 0.32 + f.x * 0.07 };
-    const tries = [[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0], [0, 0, 0, 1]];
+    const at = { x: h.x + f.x * 0.3 + f.z * 0.08, y: h.y - 0.16, z: h.z + f.z * 0.3 - f.x * 0.08 };
+    // Fingers up, palm toward the face.
+    const tries = [wrist('left', [0, 1, 0], [-f.x, 0, -f.z]), wrist('left', [f.x * 0.3, 0.9, f.z * 0.3], [-f.x, 0.2, -f.z]), [1, 0, 0, 0], [0, 0, 1, 0]];
     for (const q of tries) {
       await glide('left', at, 500, q);
       await wait(400);
@@ -113,148 +130,179 @@ fs.mkdirSync(OUT, { recursive: true });
     }
     return false;
   };
+  const closePalm = () => glide('left', rest.left, 500, pose('left', 'reach'));
+  const lookAt = (target) => remote('look_at', { device: 'headset', target });
+  const dismissCoach = async () => { if (await lab('coach')) { await poke('ok'); } };
 
   // ---------------------------------------------------------------- 1. Setup
   await page.evaluate(() => { window.IWER_DEVICE.primaryInputMode = 'hand'; });
-  await page.getByText('Enter XR').first().click();
-  await page.waitForFunction(() => window.lab.setup() === 'auto', null, { timeout: 20000 });
+  await page.getByText('Enter mixed reality').click();
+  await page.waitForFunction(() => ['auto', 'manual'].includes(window.lab.setup()), null, { timeout: 20000 });
   await remote('set_transform', { device: 'headset', position: { x: -0.95, y: 1.15, z: 0.72 } });
   await lookAt({ x: -0.95, y: 0.8, z: 1.28 });
   await hideChrome();
   const trimStart = Date.now() - t0;
-  await page.waitForFunction(() => window.lab.setup() === 'ready', null, { timeout: 20000 });
+  await page.waitForFunction(() => window.lab.setup() === 'ready', null, { timeout: 30000 });
+  const d0 = await desk(0, 0, 0);
+  const dz = await desk(0, 0, -1);
+  fwd = norm([dz.x - d0.x, 0, dz.z - d0.z]);
+  rest.right = await desk(0.22, 0.05, 0.15);
+  rest.left = await desk(-0.22, 0.05, 0.15);
   caption('Hands Lab finds your real table and sets up on it');
-  await pin('right', await desk(0.3, 0.08, 0.3));
-  await pin('left', await desk(-0.3, 0.08, 0.3));
+  await pin('right', await desk(0.3, 0.1, 0.32), pose('right', 'reach'));
+  await pin('left', await desk(-0.3, 0.1, 0.32), pose('left', 'reach'));
   await hideChrome();
-  await rest();
-  await wait(1800);
+  await toRest();
+  await wait(1500);
+  if (process.env.PREVIEW) {
+    // Quick pose check: one frame with the hands at rest and one mid-poke.
+    await page.screenshot({ path: path.join(OUT, 'preview-rest.png') });
+    const b = await act('world', 'button');
+    const q = pose('right', 'poke');
+    await glide('right', { x: b.x, y: b.y + 0.05, z: b.z }, 500, q);
+    await page.screenshot({ path: path.join(OUT, 'preview-poke.png') });
+    await browser.close();
+    return;
+  }
 
   // ---------------------------------------------------------------- 2. Tutorial
   caption('Tutorial 1/4: poke the button with a fingertip');
   const btn = await act('world', 'button');
-  await glide('right', { x: btn.x, y: btn.y + 0.07, z: btn.z }, 700);
-  await glide('right', { x: btn.x, y: btn.y - 0.012, z: btn.z }, 450);
-  await wait(500);
-  await glide('right', { x: btn.x, y: btn.y + 0.08, z: btn.z }, 400);
-  await wait(700);
+  await pokeAt({ ...btn, y: btn.y + 0.006, nx: 0, ny: 1, nz: 0 });
+  await wait(600);
   caption('2/4: pinch the orb, carry it into the ring');
   await carry('right', await act('world', 'orb'), await act('world', 'ring'));
-  await wait(700);
+  await wait(600);
   caption('3/4: pinch the rim and twist');
   await twist('right', [0, 0.03, 0.03], 0.05);
-  await wait(700);
+  await wait(600);
   caption('4/4: turn your left palm toward you for the menu');
-  await rest();
+  await toRest();
   const palm = await openPalm();
-  await wait(1200);
-  await glide('left', await desk(-0.26, 0.05, 0.17), 600);
-  await wait(400);
-  caption("Ready. These four moves work everywhere");
+  await wait(1000);
+  await closePalm();
+  caption("Ready. These moves work everywhere");
   await poke('finish');
-  await rest();
-  await wait(600);
-
-  // ---------------------------------------------------------------- 3. Hub -> Desk Focus
-  caption('Five prototypes in one lab');
-  await wait(1500);
-  await poke('focus');
-  await wait(600);
-  caption('Desk Focus: your day, pinned to your desk');
-  await lookAt(await desk(0, 0.14, -0.12));
-  await wait(1200);
-  await poke('ok');
-  const s = await lab('state');
-  caption('Pinch a card and carry it to the focus pad');
-  await carry('right', await act('cardWorld', s.zones.today[0]), await act('padWorld'), 0.08);
+  await toRest();
   await wait(500);
-  caption('Pinch the dial and twist to start a focus session');
-  await twist('right', [0.19, 0.025, 0.03], 0.042, 0.22);
-  await wait(1600);
-  caption('Finished? Drop it in the tray. Your streak plant grows');
+
+  // ---------------------------------------------------------------- 3. Home -> Desk Focus
+  caption('Home: poke an app to open it');
+  await lookAt(await desk(0, 0.14, -0.1));
+  await wait(1200);
+  const tile = await act('tileWorld', 'focus');
+  await pokeAt(tile);
+  await wait(600);
+  caption('Desk Focus: your day, on your desk');
+  await lookAt(await desk(0.02, 0.12, -0.02));
+  await wait(900);
+  await dismissCoach();
+  await toRest();
+  const s = await lab('state');
+  caption('Pinch a card off the planner, carry it to the focus pad');
+  await carry('right', await act('cardWorld', s.zones.today[0]), await act('padWorld'), 0.06);
+  await wait(400);
+  caption('Twist the dial to start a focus session');
+  await twist('right', [0.2, 0.025, 0.065], 0.042, 0.22);
+  await toRest();
+  caption('The wall shows your timer and progress at a glance');
+  await lookAt(await lab('deskToWorld', 0, 0.4, -0.36));
+  await wait(2600);
+  await lookAt(await desk(0.02, 0.12, -0.02));
+  caption('Done? Drop it in the tray. Your streak plant grows');
   const fs2 = await lab('state');
   await carry('right', await act('cardWorld', fs2.zones.focus[0]), await act('trayWorld'), 0.06);
-  await wait(1800);
+  await wait(1500);
 
-  // ---------------------------------------------------------------- 4. Palm menu -> Conjure
+  // ---------------------------------------------------------------- 4. Conjure
   caption('Palm up, Home');
-  await rest();
-  if (await openPalm()) {
-    await wait(500);
-    await poke('home');
-  } else {
-    await lab('go', 'hub');
-  }
-  await glide('left', await desk(-0.26, 0.05, 0.17), 500);
-  await lookAt({ x: -0.95, y: 0.8, z: 1.28 });
+  await toRest();
+  if (await openPalm()) { await wait(400); await poke('home'); } else await lab('go', 'hub');
+  await closePalm();
+  await lookAt(await desk(0, 0.14, -0.1));
   await wait(500);
-  await poke('conjure');
+  await pokeAt(await act('tileWorld', 'conjure'));
+  await lookAt(await desk(0, 0.1, -0.02));
   await wait(500);
-  await poke('ok');
+  await dismissCoach();
+  await toRest();
   caption('Conjure: say what you want (voice simulated here)');
-  // The emulator renders slowly, so give each result time to grow in on camera.
   await act('say', 'a red mushroom');
   await wait(6000);
   caption('"make it blue"');
   await act('say', 'make it blue');
   await wait(4000);
-  caption('"bigger"');
-  await act('say', 'bigger');
-  await wait(4000);
-  caption('"a tiny castle"');
-  await act('say', 'a tiny castle');
-  await wait(6000);
-  caption('Pinch a creation and place it anywhere');
-  await carry('right', await act('itemWorld', 1), await desk(0.12, 0.05, 0.12), 0.06);
-  await wait(1200);
-
-  // ---------------------------------------------------------------- 5. Shot Board
-  await lab('go', 'shotboard');
-  await lookAt(await desk(0, 0.12, -0.08));
-  await wait(600);
-  await poke('ok');
-  caption('Shot Board: pose the scene with a pinch');
-  const hero = await act('propWorld', 'Hero');
-  await carry('right', hero, await desk(-0.02, 0.04, 0.02), 0.04);
-  await wait(500);
-  caption('Pinch with both hands and pull apart to frame a shot');
-  const c = await desk(0, 0.2, 0.16);
-  await Promise.all([glide('left', { x: c.x - 0.03, y: c.y - 0.01, z: c.z }, 600), glide('right', { x: c.x + 0.03, y: c.y + 0.01, z: c.z }, 600)]);
-  await pinch('left', true); await pinch('right', true);
-  const lv = await desk(-0.11, 0.16, 0.16); const rv = await desk(0.11, 0.25, 0.16);
-  await Promise.all([glide('left', lv, 800), glide('right', rv, 800)]);
-  await wait(500);
-  await pinch('right', false); await pinch('left', false);
-  await wait(900);
-  caption('Each shot lands on your storyboard');
-  await rest();
-  await wait(800);
-  await poke('play');
-  await wait(2500);
-
-  // ---------------------------------------------------------------- 6. Clay
-  await lab('go', 'clay');
-  await lookAt(await desk(0, 0.09, -0.02));
-  await wait(600);
-  await poke('ok');
-  caption('Clay: press your fingertips in to sculpt');
-  for (const [x, y, z] of [[0.0, 0.035, 0.045], [0.02, 0.0, 0.05], [-0.02, 0.0, 0.05]]) {
-    const out = await act('clayWorld', x * 1.6, y * 1.6, z * 1.6);
-    const inn = await act('clayWorld', x * 0.7, y * 0.7, z * 0.7);
-    await glide('right', out, 450);
-    await glide('right', inn, 450);
-    await glide('right', out, 300);
-  }
-  caption('Pinch and pull. Mirror mode keeps it symmetric');
-  const surf = await act('clayWorld', 0.03, 0.044, 0.0);
-  const pulled = await act('clayWorld', 0.055, 0.085, 0.0);
-  await glide('right', { x: surf.x, y: surf.y + 0.03, z: surf.z }, 500);
-  await glide('right', surf, 300);
+  caption('Pick it up and turn your wrist to turn it');
+  const item = await act('itemWorld', 0);
+  await glide('right', item, 650, pose('right', 'reach'));
   await pinch('right', true);
-  await glide('right', pulled, 900);
+  for (let i = 1; i <= 14; i++) {
+    const a = (i / 14) * Math.PI * 0.9;
+    const f = [Math.cos(a) * fwd[0] - Math.sin(a) * fwd[2], -0.35, Math.sin(a) * fwd[0] + Math.cos(a) * fwd[2]];
+    await pin('right', { x: item.x, y: item.y + 0.04 * Math.sin((i / 14) * Math.PI), z: item.z }, wrist('right', f, [0, -1, 0]));
+    await wait(110);
+  }
   await pinch('right', false);
-  await rest();
-  await wait(2000);
+  await toRest();
+  await wait(800);
+
+  // ---------------------------------------------------------------- 5. Frame anywhere
+  caption('Frame a shot with both hands, anywhere in the lab');
+  const c = await desk(0, 0.2, 0.12);
+  const off = (x, y) => ({ x: c.x + fwd[2] * x, y: c.y + y, z: c.z - fwd[0] * x });
+  await Promise.all([glide('left', off(0.04, -0.01), 600, pose('left', 'frame')), glide('right', off(-0.04, 0.01), 600, pose('right', 'frame'))]);
+  await pinch('left', true); await pinch('right', true);
+  await Promise.all([glide('left', off(0.13, -0.05), 900), glide('right', off(-0.13, 0.05), 900)]);
+  await wait(600);
+  await pinch('right', false); await pinch('left', false);
+  await wait(1800);
+  await toRest();
+
+  // ---------------------------------------------------------------- 6. Sketch
+  await lab('go', 'sketch');
+  await wait(400);
+  await dismissCoach();
+  await act('clear');
+  caption('Sketch: pinch and draw in the air');
+  const loop = async (side, cx, cy, r, turns) => {
+    const start = await desk(cx + r, cy, 0.04);
+    await glide(side, start, 500, pose(side, 'reach'));
+    await pinch(side, true);
+    for (let i = 1; i <= 28; i++) {
+      const a = (i / 28) * Math.PI * 2 * turns;
+      await pin(side, await desk(cx + Math.cos(a) * r, cy + Math.sin(a) * r * 0.8, 0.04 - i * 0.001));
+      await wait(45);
+    }
+    await pinch(side, false);
+  };
+  await loop('right', 0.06, 0.16, 0.06, 1.1);
+  caption('Draw with both hands at once');
+  await act('press', 'c1');
+  await Promise.all([loop('left', -0.12, 0.13, 0.04, 1), loop('right', 0.16, 0.12, 0.035, 1)]);
+  await toRest();
+  await wait(1500);
+
+  // ---------------------------------------------------------------- 7. Shot Board
+  await lab('go', 'shotboard');
+  await lookAt(await desk(0, 0.2, -0.15));
+  await wait(500);
+  await dismissCoach();
+  caption('Shot Board: your shots, as a storyboard');
+  await wait(2200);
+  await lookAt(await desk(0, 0.1, -0.02));
+  caption('Pose the scene: turn your wrist to turn a figure');
+  const hero = await act('propWorld', 'Hero');
+  await glide('right', hero, 600, pose('right', 'reach'));
+  await pinch('right', true);
+  for (let i = 1; i <= 10; i++) {
+    const a = (i / 10) * Math.PI * 0.7;
+    const f = [Math.cos(a) * fwd[0] - Math.sin(a) * fwd[2], -0.35, Math.sin(a) * fwd[0] + Math.cos(a) * fwd[2]];
+    await pin('right', await desk(-0.06 + i * 0.006, 0.04, 0.04), wrist('right', f, [0, -1, 0]));
+    await wait(100);
+  }
+  await pinch('right', false);
+  await toRest();
+  await wait(1200);
   caption('');
   const end = Date.now() - t0;
 

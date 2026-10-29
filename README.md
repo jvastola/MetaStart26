@@ -1,22 +1,23 @@
 # Hands Lab: Meta VR Start 2026 prototypes
 
-Five hands-first mixed-reality prototypes for the
+Six hands-first mixed-reality prototypes for the
 [Meta VR Start Developer Competition 2026](https://start-developer-competition-26.devpost.com/),
 built with Meta's Immersive Web SDK (IWSDK, WebXR). Judges open a link in the
 Quest browser: no APK or release channel.
 
-They share one host: a launcher, desk and wall detection, hand input, and a
-palm-up menu. That makes it cheap to compare concepts before we pick the one
+They share one host: an app-style home screen, desk and wall detection, hand
+input, a palm-up menu, and a two-hand camera frame that works everywhere. That makes it cheap to compare concepts before we pick the one
 to submit. The goal is to choose a Productivity entry for the **New Experience**
 division.
 
 | # | Prototype | Track | One-line pitch |
 |---|---|---|---|
-| 1 | **Desk Focus** | Productivity | A daily planner pinned to your real wall and desk: pinch cards, twist a timer, flick to done, grow a streak plant. |
+| 1 | **Desk Focus** | Productivity | A daily planner on your real desk, all within reach: pinch cards off a desk planner, twist a timer, drop them in Done, grow a streak plant. A glance display on the wall shows the timer and progress. |
 | 2 | **Conjure** | Productivity / creative (Agentic) | Say what you want and it appears on your desk. Instant offline sketch, optionally upgraded by Meshy or Tripo. |
-| 3 | **Shot Board** | Productivity / creative | Storyboard a scene on your desk by framing shots with both hands like a director. |
+| 3 | **Shot Board** | Productivity / creative | Storyboard a scene on your desk. Frame shots with both hands like a director, anywhere in the lab; they collect on the board. |
 | 4 | **Clay** | Productivity / creative | Sculpt with your bare fingertips on a turntable; export to OBJ. |
-| 5 | **Desk Links** | Gaming (reference) | Fingertip mini golf on your desk, kept for comparing hand mechanics. |
+| 5 | **Sketch** | Productivity / creative | Pinch to draw in the air with either hand or both; colours, sizes, undo, autosave. |
+| 6 | **Desk Links** | Gaming (reference) | Fingertip mini golf on your desk, kept for comparing hand mechanics. |
 
 ## Run it
 
@@ -81,9 +82,9 @@ interaction is **direct touch**, not rays:
 | Gesture | Does |
 |---|---|
 | Poke a button with your index fingertip, or pinch on it | Press it |
-| Pinch near an object | Pick it up. It follows your pinch; release to drop. |
+| Pinch near an object | Pick it up. It follows your hand, rotation included: turn your wrist to turn it. Release to drop. |
 | Pinch with both hands on one object | Scale and turn it (Conjure) |
-| Pinch with both hands and pull apart | Frame a camera shot (Shot Board) |
+| Pinch with both hands close together, then pull apart | Frame a camera shot, in any app; let go to capture it to the album |
 | Pinch a dial or rim and move around it | Twist it (timer, turntable) |
 | Turn your left palm toward your face | Wrist menu: Home, Move desk, How to, Sound |
 | Thumb microgestures (thumb tap, swipe on the index finger) | Shortcuts: start/pause, next card, undo, bigger/smaller, rotate |
@@ -154,9 +155,16 @@ models:
      proxy may download GLBs from).
 3. In the app, press **AI: off** to cycle through the providers. The endpoint
    is same-origin `/api/gen3d` on `*.vercel.app`. Elsewhere, set
-   `VITE_GEN3D_ENDPOINT` at build time, or the `gen3d-endpoint` localStorage key.
+   `VITE_GEN3D_ENDPOINT` at build time, or enter it in **Settings**.
 
-The proxy has **not been run against the live Meshy or Tripo APIs yet**. Check
+**Or bring your own key (works on GitHub Pages).** On the page, before
+entering MR, press **Settings** and paste a Meshy or Tripo API key. It is
+stored only in this browser and sent only to that provider; Conjure then calls
+the provider directly. Use a key you can revoke. Direct calls only work if the
+provider allows requests from browsers (CORS); if it does not, Conjure shows
+that error and the Vercel proxy is the way round it.
+
+Neither the proxy nor the direct-key path has been **run against the live Meshy or Tripo APIs yet**. Check
 the response shapes in `api/gen3d.ts` against their current docs before relying
 on it. Tripo's model download host in particular may need adding to
 `GEN3D_ALLOWED_HOSTS`.
@@ -188,6 +196,10 @@ src/protos/focus/        Desk Focus (focus-store.ts is the pure data model)
 src/protos/conjure/      Conjure (intent.ts parser, kit.ts offline generator, remote.ts client)
 src/protos/shotboard/    Shot Board
 src/protos/clay/         Clay (sculpt.ts is the pure sculpting maths)
+src/protos/sketch/       Sketch (pinch-to-draw strokes)
+src/core/grab.ts         hand-rotation hold used by every pickable object
+src/core/camera-frame.ts two-hand frame gesture and the shared shot album
+src/core/settings-ui.ts  page Settings dialog (AI keys)
 src/protos/golf/         Desk Links
 api/gen3d.ts             Meshy/Tripo proxy (Vercel function)
 tests/                   unit tests for the pure modules

@@ -126,7 +126,7 @@ def main():
     card(end_card, [
         ('No controllers. Just your hands and your room.', 40, BOLD, 'white'),
         ("Built with Meta's Immersive Web SDK - runs in the Quest browser", 26, FONT, '0x9fc7ff'),
-        ('Desk Focus - Conjure - Shot Board - Clay - Desk Links', 22, FONT, '0xaeb3bd'),
+        ('Desk Focus - Conjure - Shot Board - Sketch - Clay - Desk Links', 22, FONT, '0xaeb3bd'),
     ], END_S)
 
     total = TITLE_S + length + END_S

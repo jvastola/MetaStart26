@@ -95,6 +95,8 @@ def render(name, arg):
         return layered((0, tone(330, 0.12, 0.08, kind='triangle')), (0.09, tone(247, 0.18, 0.08, kind='triangle')))
     if name == 'success':
         return layered((0, bell(523.25, 0.11)), (0.07, bell(659.25, 0.1)), (0.14, bell(783.99, 0.1)), (0.24, bell(1046.5, 0.08)))
+    if name == 'shutter':
+        return layered((0, noise(4200, 0.035, 0.35, q=1.5)), (0.05, noise(1800, 0.07, 0.18, q=2)))
     if name == 'step':
         return layered((0, bell(659.25, 0.1)), (0.1, bell(987.77, 0.1)))
     if name == 'chime':
