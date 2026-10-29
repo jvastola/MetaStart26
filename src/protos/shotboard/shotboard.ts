@@ -320,7 +320,6 @@ export class ShotBoardPrototype implements Prototype {
 
   private onButton(id: string): void {
     if (id === 'snap') this.snapView();
-    if (id === 'turn') this.turnSelected(1);
     if (id === 'undo') this.ctx.album.removeLast();
     if (id === 'play') this.play();
   }
@@ -334,7 +333,6 @@ export class ShotBoardPrototype implements Prototype {
     );
     this.panel.setButtons([
       { id: 'snap', label: 'Snap view', tone: 'primary' },
-      { id: 'turn', label: 'Turn', disabled: !this.selected },
       { id: 'play', label: this.playing >= 0 ? 'Playing' : 'Play', disabled: count === 0 },
       { id: 'undo', label: 'Undo shot', disabled: count === 0 },
     ]);

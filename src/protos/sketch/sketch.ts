@@ -128,7 +128,7 @@ export class SketchPrototype implements Prototype {
   readonly accent = ACCENTS.sketch;
   readonly howTo = [
     'Pinch and move to draw; let go to finish the stroke.',
-    'Draw with both hands at once if you like.',
+    'Pinch BOTH hands together and pull apart for a snapshot.',
     'Pinch the colour wheel to pick a colour; tap your thumb to undo.',
   ];
   readonly deskRoot = new Group();
@@ -147,7 +147,7 @@ export class SketchPrototype implements Prototype {
 
   init(ctx: LabContext): void {
     this.ctx = ctx;
-    this.panel = new CanvasPanel({ width: 0.34, height: 0.12, columns: 3, buttonHeight: 0.034, accent: this.accent });
+    this.panel = new CanvasPanel({ width: 0.36, height: 0.12, columns: 4, buttonHeight: 0.034, accent: this.accent });
     this.panel.mesh.name = 'SketchPanel';
     this.panel.mesh.position.set(0.33, 0.09, -0.04);
     this.panel.mesh.rotation.set(-0.25, -0.5, 0, 'YXZ');
@@ -172,10 +172,6 @@ export class SketchPrototype implements Prototype {
     this.save();
   }
 
-  holding(): boolean {
-    return this.live.size > 0;
-  }
-
   update(dt: number): void {
     this.panel.update(this.ctx.pointers, dt);
     for (const hand of this.ctx.hands.both) {
@@ -183,7 +179,14 @@ export class SketchPrototype implements Prototype {
       if (hand.gesture === 'left') this.wheel.cycleRecent(-1);
       if (hand.gesture === 'tap') this.undo();
     }
-    this.wheel.update(this.ctx.pointers);
+    if (this.wheel.mesh.visible) this.wheel.update(this.ctx.pointers);
+    // Both hands pinched together to frame a shot: drop the strokes they began.
+    if (this.ctx.frameArmed) {
+      for (const [, live] of this.live) this.removeStroke(live.stroke);
+      this.live.clear();
+      this.refresh();
+      return;
+    }
     for (const hand of this.ctx.pointers) this.updateHand(hand);
     if (this.saveTimer > 0) {
       this.saveTimer -= dt;
@@ -257,6 +260,7 @@ export class SketchPrototype implements Prototype {
 
   private onButton(id: string): void {
     if (id === 'size') this.size = (this.size + 1) % SIZES.length;
+    if (id === 'color') this.wheel.mesh.visible = !this.wheel.mesh.visible;
     if (id === 'undo') this.undo();
     if (id === 'clear') this.clear();
   }
@@ -271,6 +275,7 @@ export class SketchPrototype implements Prototype {
         : `Drag on the desk to draw. ${this.strokes.length} strokes, ${points} points.`,
     );
     this.panel.setButtons([
+      { id: 'color', label: 'Colour', tone: this.wheel.mesh.visible ? 'active' : 'default' },
       { id: 'size', label: SIZES[this.size].name },
       { id: 'undo', label: 'Undo', disabled: this.strokes.length === 0 },
       { id: 'clear', label: 'Clear', disabled: this.strokes.length === 0 },
@@ -308,6 +313,7 @@ export class SketchPrototype implements Prototype {
       drawing: this.live.size,
       color: this.colorHex,
       wheel: this.wheel.debug(),
+      wheelVisible: this.wheel.mesh.visible,
       size: SIZES[this.size].name,
     };
   }

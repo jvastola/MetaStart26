@@ -9,9 +9,13 @@
  */
 
 import {
+  BackSide,
+  BoxGeometry,
   CanvasTexture,
+  CircleGeometry,
   Color,
   CylinderGeometry,
+  Float32BufferAttribute,
   InstancedMesh,
   Matrix4,
   Quaternion,
@@ -20,7 +24,9 @@ import {
   Group,
   Mesh,
   MeshBasicMaterial,
+  MeshStandardMaterial,
   PlaneGeometry,
+  RepeatWrapping,
   RingGeometry,
   SphereGeometry,
   SRGBColorSpace,
@@ -247,5 +253,88 @@ export class HandSkeleton {
     });
     this.joints.instanceMatrix.needsUpdate = true;
     this.bones.instanceMatrix.needsUpdate = true;
+  }
+}
+
+/**
+ * The "passthrough off" room. WebXR cannot switch passthrough off mid-session,
+ * so this hides the real room behind an opaque gradient dome and floor, and
+ * puts a virtual tabletop under the desk mat so the workspace still rests on
+ * something. `room` lives in world space; `tabletop` belongs in the desk frame.
+ */
+export class VirtualRoom {
+  readonly room = new Group();
+  readonly tabletop = new Group();
+
+  constructor() {
+    // Dome: vertex colours from a warm horizon to a deep sky.
+    const dome = new SphereGeometry(7, 48, 24);
+    const colors: number[] = [];
+    const pos = dome.getAttribute('position');
+    const top = new Color('#1d2a44');
+    const horizon = new Color('#c9b8a6');
+    const ground = new Color('#3a3631');
+    const c = new Color();
+    for (let i = 0; i < pos.count; i += 1) {
+      const y = pos.getY(i) / 7;
+      if (y >= 0) c.copy(horizon).lerp(top, Math.pow(y, 0.6));
+      else c.copy(horizon).lerp(ground, Math.min(1, -y * 3));
+      colors.push(c.r, c.g, c.b);
+    }
+    dome.setAttribute('color', new Float32BufferAttribute(colors, 3));
+    const domeMesh = new Mesh(dome, new MeshBasicMaterial({ vertexColors: true, side: BackSide, depthWrite: false }));
+    domeMesh.renderOrder = -10;
+    domeMesh.frustumCulled = false;
+
+    // Floor with a faint grid so the space has scale.
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 512;
+    const g = canvas.getContext('2d')!;
+    g.fillStyle = '#2e2b28';
+    g.fillRect(0, 0, 512, 512);
+    g.strokeStyle = 'rgba(255,255,255,0.07)';
+    g.lineWidth = 2;
+    for (let i = 0; i <= 512; i += 32) {
+      g.beginPath();
+      g.moveTo(i, 0);
+      g.lineTo(i, 512);
+      g.moveTo(0, i);
+      g.lineTo(512, i);
+      g.stroke();
+    }
+    const tex = new CanvasTexture(canvas);
+    tex.colorSpace = SRGBColorSpace;
+    tex.wrapS = tex.wrapT = RepeatWrapping;
+    tex.repeat.set(6, 6);
+    const floor = new Mesh(new CircleGeometry(6, 64), new MeshBasicMaterial({ map: tex }));
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = 0.001;
+    this.room.add(domeMesh, floor);
+
+    // Tabletop under the mat (desk frame: y = 0 is the desk surface).
+    const wood = new MeshStandardMaterial({ color: '#8a6a4f', roughness: 0.7 });
+    const slab = new Mesh(new BoxGeometry(0.95, 0.03, 0.62), wood);
+    slab.position.y = -0.016;
+    const leg = new Mesh(new CylinderGeometry(0.05, 0.08, 1, 20), new MeshStandardMaterial({ color: '#3a3f4a', roughness: 0.6 }));
+    leg.name = 'TableLeg';
+    this.tabletop.add(slab, leg);
+    this.setVisible(false);
+  }
+
+  /** Keep the pedestal reaching down to the floor wherever the desk is. */
+  fitLeg(deskHeight: number): void {
+    const leg = this.tabletop.getObjectByName('TableLeg') as Mesh;
+    const h = Math.max(0.1, deskHeight - 0.03);
+    leg.scale.y = h;
+    leg.position.y = -0.03 - h / 2;
+  }
+
+  setVisible(visible: boolean): void {
+    this.room.visible = visible;
+    this.tabletop.visible = visible;
+  }
+
+  get visible(): boolean {
+    return this.room.visible;
   }
 }

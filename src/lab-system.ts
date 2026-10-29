@@ -26,7 +26,7 @@ import {
   XRAnchor,
   XRPlane,
 } from '@iwsdk/core';
-import { DeskMat, HandCursor, HandSkeleton } from './core/art.js';
+import { DeskMat, HandCursor, HandSkeleton, VirtualRoom } from './core/art.js';
 import { Album, FrameCamera } from './core/camera-frame.js';
 import { openSettings } from './core/settings-ui.js';
 import { VirtualKeyboard } from './core/keyboard.js';
@@ -51,6 +51,7 @@ const BAR_HALF = 0.12;
 const BAR_Y = 0.012;
 const BAR_Z = 0.235;
 const DESK_KEY = 'lab-desk-v1';
+const PASSTHROUGH_KEY = 'lab-passthrough-v1';
 type Setup = 'auto' | 'manual' | 'ready';
 
 interface SavedPose {
@@ -63,8 +64,10 @@ interface SavedPose {
 export class LabSystem extends createSystem({
   planes: { required: [XRPlane] },
 }) {
-  private ctx!: LabContext & { immersive: boolean; time: number; pointers: readonly HandState[]; wristMenuOpen: boolean };
+  private ctx!: LabContext & { immersive: boolean; time: number; pointers: readonly HandState[]; wristMenuOpen: boolean; frameArmed: boolean };
   private mat!: DeskMat;
+  private room3d!: VirtualRoom;
+  private passthrough = true;
   private deskBar!: Mesh;
   private keyboard = new VirtualKeyboard();
   private deskGrab: { hand: HandState; pose: HeldPose } | null = null;
@@ -141,6 +144,7 @@ export class LabSystem extends createSystem({
       head: this.head,
       time: 0,
       wristMenuOpen: false,
+      frameArmed: false,
       setMousePlane(point: Vector3, normal: Vector3) {
         system.mousePlanePoint.copy(point);
         system.mousePlaneNormal.copy(normal).normalize();
@@ -451,6 +455,7 @@ export class LabSystem extends createSystem({
     }
     pose.apply(hand, this.desk, { upright: true });
     this.desk.updateMatrixWorld(true);
+    this.room3d.fitLeg(this.desk.getWorldPosition(this.tmp).y);
     if (!this.realWall) this.placeDefaultWall();
   }
 
@@ -518,6 +523,7 @@ export class LabSystem extends createSystem({
     // The director's frame works in every prototype, unless it owns the pinches.
     const frameEnabled = this.ctx.immersive && !this.wristOpen && this.deskGrab == null && !(this.active?.holding?.() ?? false);
     const caption = this.frame.update(this.hands.left, this.hands.right, this.head, frameEnabled, dt);
+    this.ctx.frameArmed = this.frame.isArmed;
     if (caption) this.afterShot(caption);
     this.active?.update(dt);
   }
@@ -532,6 +538,28 @@ export class LabSystem extends createSystem({
   private afterShot(caption: string): void {
     Sfx.shutter();
     this.toast(`Shot ${this.album.shots.length} saved (${caption}). See it in Shot Board.`);
+  }
+
+  private refreshWristButtons(): void {
+    this.wristPanel.setButtons([
+      { id: 'home', label: 'Home', tone: 'primary' },
+      { id: 'help', label: 'How to' },
+      { id: 'mute', label: Sfx.muted ? 'Sound off' : 'Sound on', tone: Sfx.muted ? 'default' : 'active' },
+      { id: 'room', label: this.passthrough ? 'Passthrough' : 'Virtual room', tone: this.passthrough ? 'active' : 'default' },
+    ]);
+  }
+
+  /**
+   * WebXR cannot turn passthrough off mid-session, so "off" surrounds you
+   * with an opaque virtual room (dome, floor, tabletop under the desk).
+   */
+  private setPassthrough(on: boolean, quiet = false): void {
+    this.passthrough = on;
+    store.set(PASSTHROUGH_KEY, on);
+    this.desk.updateMatrixWorld(true);
+    this.room3d.fitLeg(this.desk.getWorldPosition(this.tmp).y);
+    this.room3d.setVisible(!on);
+    if (!quiet) this.toast(on ? 'Passthrough on: your real room.' : 'Passthrough off: virtual room.');
   }
 
   /** First-visit how-to card for a prototype (and on demand from the wrist menu). */
@@ -624,12 +652,7 @@ export class LabSystem extends createSystem({
     chrome.add(this.setupPanel.mesh);
 
     this.wristPanel = new CanvasPanel({ width: 0.17, height: 0.14, columns: 2, buttonHeight: 0.03 });
-    this.wristPanel.setButtons([
-      { id: 'home', label: 'Home', tone: 'primary' },
-      { id: 'move', label: 'Move desk' },
-      { id: 'help', label: 'How to' },
-      { id: 'mute', label: 'Sound' },
-    ]);
+    this.refreshWristButtons();
     this.wristPanel.onPress = (id) => {
       if (id === 'home') this.go('hub');
       if (id === 'help' && this.active) this.showHowTo(this.active, true);
@@ -637,18 +660,19 @@ export class LabSystem extends createSystem({
         Sfx.setMuted(!Sfx.muted);
         this.toast(Sfx.muted ? 'Sound off.' : 'Sound on.');
       }
-      if (id === 'move') {
-        this.showActive(false);
-        this.setup = 'manual';
-        this.setupTime = 0;
-        this.moving = true;
-      }
+      if (id === 'room') this.setPassthrough(!this.passthrough);
+      this.refreshWristButtons();
     };
     this.wristPanel.mesh.visible = false;
     chrome.add(this.wristPanel.mesh);
 
     this.mat = new DeskMat();
     this.desk.add(this.mat.mesh);
+    // "Passthrough off": an opaque virtual room and a tabletop under the mat.
+    this.room3d = new VirtualRoom();
+    this.world.createTransformEntity(this.room3d.room);
+    this.desk.add(this.room3d.tabletop);
+    this.setPassthrough(store.get<boolean>(PASSTHROUGH_KEY, true), true);
     // Grab bar on the front edge of the mat: pinch it to move the workspace.
     this.deskBar = new Mesh(
       new CylinderGeometry(0.0075, 0.0075, BAR_HALF * 2, 20),
@@ -852,6 +876,14 @@ export class LabSystem extends createSystem({
       shots: () => this.album.shots.map((s) => s.caption),
       framing: () => this.frame.active,
       keyboard: () => (this.keyboard.isOpen ? this.keyboard.value : null),
+      passthrough: () => this.passthrough,
+      togglePassthrough: () => this.setPassthrough(!this.passthrough),
+      wristButton: (id: string) => {
+        const p = this.wristPanel.buttonWorld(id);
+        if (!p) return null;
+        const n = this.wristPanel.normalWorld();
+        return { x: p.x, y: p.y, z: p.z, nx: n.x, ny: n.y, nz: n.z };
+      },
       keyWorld: (id: string) => this.keyboard.keyWorld(id),
       deskBar: () => {
         const p = this.desk.localToWorld(new Vector3(0, BAR_Y, BAR_Z));

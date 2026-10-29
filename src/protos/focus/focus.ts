@@ -629,7 +629,6 @@ export class FocusPrototype implements Prototype {
   // ------------------------------------------------------------ UI
 
   private onButton(id: string): void {
-    if (id === 'home') this.ctx.goHome();
     if (id === 'timer') this.toggleTimer();
     if (id === 'add') {
       this.ctx.openKeyboard({
@@ -747,7 +746,6 @@ export class FocusPrototype implements Prototype {
       { id: 'add', label: 'New card', sub: 'type or say it' },
       { id: 'timer', label: this.running ? 'Pause' : this.remaining > 0 ? 'Resume' : 'Start', tone: 'primary', disabled: !focus },
       { id: 'next', label: 'Next card' },
-      { id: 'home', label: 'Lab menu' },
     ]);
     this.updatePlant();
   }

@@ -27,6 +27,7 @@ import { type LabContext, type Prototype, store } from '../../core/context.js';
 import { ACCENTS, blobShadow } from '../../core/art.js';
 import type { HandState } from '../../core/hands.js';
 import { ColorWheel } from '../../core/color-wheel.js';
+import { DeskSlider } from '../../core/slider.js';
 import { CanvasPanel } from '../../core/panel.js';
 import { Sfx } from '../../core/sfx.js';
 import {
@@ -55,6 +56,9 @@ const TABLE_R = 0.1;
 const SAVE_KEY = 'clay-sculpt-v1';
 const CLAY_COLOR = '#c98b62';
 const COLOR_KEY = 'clay-color-v1';
+const SCALE_KEY = 'clay-scale-v1';
+/** Slider 0..1 to sculpture scale 0.5x..2x (1x in the middle). */
+const sliderToScale = (v: number): number => 0.5 * 4 ** v;
 
 export class ClayPrototype implements Prototype {
   readonly id = 'clay';
@@ -82,6 +86,7 @@ export class ClayPrototype implements Prototype {
   private tool: Tool = 'sculpt';
   private mirror = true;
   private wheel!: ColorWheel;
+  private sizeSlider!: DeskSlider;
   private dirty = false;
   private saveTimer = 0;
   private undo: Float32Array[] = [];
@@ -125,7 +130,7 @@ export class ClayPrototype implements Prototype {
     this.clay.frustumCulled = false;
     this.turntable.add(this.clay);
 
-    this.panel = new CanvasPanel({ width: 0.4, height: 0.15, columns: 5, buttonHeight: 0.03, accent: this.accent });
+    this.panel = new CanvasPanel({ width: 0.36, height: 0.15, columns: 4, buttonHeight: 0.03, accent: this.accent });
     this.panel.mesh.name = 'ClayPanel';
     // Beside the turntable so the clay stays unobstructed.
     this.panel.mesh.position.set(0.31, 0.09, -0.04);
@@ -138,7 +143,16 @@ export class ClayPrototype implements Prototype {
     this.wheel.mesh.position.set(-0.3, 0.13, 0);
     this.wheel.mesh.rotation.set(-0.2, 0.5, 0, 'YXZ');
     this.wheel.onChange = (hex) => this.setColor(hex);
+    this.wheel.mesh.visible = false;
     this.deskRoot.add(this.wheel.mesh);
+
+    // Size slider in front of the turntable: 0.5x to 2x, logarithmic.
+    this.sizeSlider = new DeskSlider(0.2, store.get<number>(SCALE_KEY, 0.5), this.accent);
+    this.sizeSlider.group.position.set(0, 0.006, 0.165);
+    this.sizeSlider.format = (v) => `${sliderToScale(v).toFixed(1)}x`;
+    this.sizeSlider.onChange = (v) => this.setScale(sliderToScale(v));
+    this.deskRoot.add(this.sizeSlider.group);
+    this.setScale(sliderToScale(this.sizeSlider.value));
   }
 
   enter(): void {
@@ -151,18 +165,30 @@ export class ClayPrototype implements Prototype {
     this.save();
   }
 
+  /** Scale the sculpture about its base so it keeps resting on the post. */
+  private setScale(scale: number): void {
+    this.clay.scale.setScalar(scale);
+    this.clay.position.y = CLAY_Y + (scale - 1) * RADIUS * 0.6;
+    store.set(SCALE_KEY, this.sizeSlider.value);
+  }
+
   private setColor(hex: string): void {
     this.material.color.set(hex);
     store.set(COLOR_KEY, hex);
   }
 
   holding(): boolean {
-    return this.pulls.length > 0 || this.spin != null || this.touching || this.wheel.active;
+    return this.pulls.length > 0 || this.spin != null || this.touching || this.wheel.active || this.sizeSlider.active;
   }
 
   update(dt: number): void {
     this.panel.update(this.ctx.pointers, dt);
-    this.wheel.update(this.ctx.pointers);
+    if (this.wheel.mesh.visible) this.wheel.update(this.ctx.pointers);
+    this.sizeSlider.update(this.ctx.pointers);
+    if (this.sizeSlider.active) {
+      this.refresh();
+      return;
+    }
     this.updateGestures();
     this.updateSpin();
     if (this.ctx.immersive) this.updateHands();
@@ -228,7 +254,7 @@ export class ClayPrototype implements Prototype {
     // Start a stroke on first contact so it can be undone in one step.
     let contact = false;
     for (let t = 0; t < count; t += 1) {
-      if (nearestDistance(this.positions, this.tips[t * 3], this.tips[t * 3 + 1], this.tips[t * 3 + 2]) < TIP_RADIUS) {
+      if (nearestDistance(this.positions, this.tips[t * 3], this.tips[t * 3 + 1], this.tips[t * 3 + 2]) < TIP_RADIUS / this.clay.scale.x) {
         contact = true;
         break;
       }
@@ -238,13 +264,14 @@ export class ClayPrototype implements Prototype {
 
     if (count > 0) {
       let moved = 0;
-      if (this.tool === 'sculpt') moved = pushTips(this.positions, this.tips, count, TIP_RADIUS);
+      const k = 1 / this.clay.scale.x;
+      if (this.tool === 'sculpt') moved = pushTips(this.positions, this.tips, count, TIP_RADIUS * k);
       else {
         const normals = this.geometry.attributes.normal.array as Float32Array;
         for (let t = 0; t < count; t += 1) {
           const [x, y, z] = [this.tips[t * 3], this.tips[t * 3 + 1], this.tips[t * 3 + 2]];
-          if (this.tool === 'smooth') moved += smoothAt(this.positions, this.neighbors, x, y, z, 0.016, 0.35);
-          else moved += inflateAt(this.positions, normals, x, y, z, 0.016, 0.0006);
+          if (this.tool === 'smooth') moved += smoothAt(this.positions, this.neighbors, x, y, z, 0.016 * k, 0.35);
+          else moved += inflateAt(this.positions, normals, x, y, z, 0.016 * k, 0.0006 * k);
         }
       }
       if (moved > 0) this.dirty = true;
@@ -254,9 +281,9 @@ export class ClayPrototype implements Prototype {
     for (const hand of this.ctx.hands.both) {
       if (!hand.tracked || !hand.pinchStarted || this.panel.contains(hand.pinchPoint)) continue;
       const l = this.local(hand.pinchPoint, this.tmp);
-      if (nearestDistance(this.positions, l.x, l.y, l.z) > 0.02) continue;
+      if (nearestDistance(this.positions, l.x, l.y, l.z) > 0.02 / this.clay.scale.x) continue;
       this.snapshot();
-      this.pulls.push({ hand, grab: grabAt(this.positions, l.x, l.y, l.z, PULL_RADIUS, this.mirror ? this.mirrorMap : undefined), start: l.clone() });
+      this.pulls.push({ hand, grab: grabAt(this.positions, l.x, l.y, l.z, PULL_RADIUS / this.clay.scale.x, this.mirror ? this.mirrorMap : undefined), start: l.clone() });
       Sfx.pinch(hand.pinchPoint);
     }
     this.applyPulls();
@@ -285,7 +312,7 @@ export class ClayPrototype implements Prototype {
         this.snapshot();
         if (this.tool === 'sculpt') {
           const l = this.local(hit, this.tmp);
-          this.pulls.push({ hand: m, grab: grabAt(this.positions, l.x, l.y, l.z, PULL_RADIUS, this.mirror ? this.mirrorMap : undefined), start: l.clone() });
+          this.pulls.push({ hand: m, grab: grabAt(this.positions, l.x, l.y, l.z, PULL_RADIUS / this.clay.scale.x, this.mirror ? this.mirrorMap : undefined), start: l.clone() });
           // Drag on a plane through the hit point, facing the camera.
           this.ctx.camera.getWorldDirection(this.tmp2).negate();
           this.ctx.setMousePlane(hit, this.tmp2);
@@ -306,8 +333,9 @@ export class ClayPrototype implements Prototype {
       const l = this.local(hit, this.tmp);
       const normals = this.geometry.attributes.normal.array as Float32Array;
       const apply = (x: number) => {
-        if (this.tool === 'smooth') smoothAt(this.positions, this.neighbors, x, l.y, l.z, 0.018, 0.4);
-        else inflateAt(this.positions, normals, x, l.y, l.z, 0.018, 0.0008);
+        const k = 1 / this.clay.scale.x;
+        if (this.tool === 'smooth') smoothAt(this.positions, this.neighbors, x, l.y, l.z, 0.018 * k, 0.4);
+        else inflateAt(this.positions, normals, x, l.y, l.z, 0.018 * k, 0.0008 * k);
       };
       apply(l.x);
       if (this.mirror) apply(-l.x);
@@ -376,12 +404,8 @@ export class ClayPrototype implements Prototype {
       this.positions.set(this.rest);
       this.dirty = true;
     }
-    if (id === 'color') {
-      this.wheel.set(CLAY_COLOR);
-      this.setColor(CLAY_COLOR);
-    }
+    if (id === 'color') this.wheel.mesh.visible = !this.wheel.mesh.visible;
     if (id === 'export') this.exportObj();
-    if (id === 'home') this.ctx.goHome();
   }
 
   private exportObj(): void {
@@ -409,17 +433,16 @@ export class ClayPrototype implements Prototype {
       smooth: 'Rub the clay with your fingertips to smooth it.',
       inflate: 'Touch the clay to build it up.',
     };
-    this.panel.setText(`Clay - ${this.tool}${this.mirror ? ' - mirrored' : ''}`, '', [tips[this.tool], 'Pinch the gold rim and drag to spin the turntable.']);
+    this.panel.setText(`Clay - ${this.tool}${this.mirror ? ' - mirrored' : ''} - size ${this.clay.scale.x.toFixed(1)}x`, '', [tips[this.tool], 'Spin: pinch the gold rim. Size: slide the knob in front.']);
     this.panel.setButtons([
       { id: 'sculpt', label: 'Sculpt', tone: this.tool === 'sculpt' ? 'active' : 'default' },
       { id: 'smooth', label: 'Smooth', tone: this.tool === 'smooth' ? 'active' : 'default' },
       { id: 'inflate', label: 'Inflate', tone: this.tool === 'inflate' ? 'active' : 'default' },
       { id: 'mirror', label: this.mirror ? 'Mirror on' : 'Mirror off', tone: this.mirror ? 'active' : 'default' },
-      { id: 'color', label: 'Clay colour' },
+      { id: 'color', label: 'Colour', tone: this.wheel.mesh.visible ? 'active' : 'default' },
       { id: 'undo', label: 'Undo', disabled: this.undo.length === 0 },
       { id: 'reset', label: 'Reset' },
       { id: 'export', label: 'Export' },
-      { id: 'home', label: 'Lab menu' },
     ]);
   }
 
@@ -433,7 +456,7 @@ export class ClayPrototype implements Prototype {
       maxR = Math.max(maxR, r);
       minR = Math.min(minR, r);
     }
-    return { tool: this.tool, mirror: this.mirror, maxR: +maxR.toFixed(4), minR: +minR.toFixed(4), undo: this.undo.length, spin: +this.turntable.rotation.y.toFixed(3) };
+    return { scale: +this.clay.scale.x.toFixed(2), wheelVisible: this.wheel.mesh.visible, tool: this.tool, mirror: this.mirror, maxR: +maxR.toFixed(4), minR: +minR.toFixed(4), undo: this.undo.length, spin: +this.turntable.rotation.y.toFixed(3) };
   }
 
   debugActions = {
@@ -449,5 +472,9 @@ export class ClayPrototype implements Prototype {
       return { x: p.x, y: p.y, z: p.z };
     },
     reset: () => this.onButton('reset'),
+    sliderWorld: (v: number) => {
+      const p = this.sizeSlider.worldAt(v);
+      return { x: p.x, y: p.y, z: p.z };
+    },
   };
 }

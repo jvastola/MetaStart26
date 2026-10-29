@@ -85,7 +85,6 @@ export class GolfPrototype implements Prototype {
         if (this.phase === 'finished') this.startRound();
         else this.startHole(this.holeIndex);
       }
-      if (id === 'home') this.ctx.goHome();
     };
     this.deskRoot.add(this.panel.mesh);
     this.startRound();
@@ -297,7 +296,6 @@ export class GolfPrototype implements Prototype {
     );
     this.panel.setButtons([
       { id: 'retry', label: this.phase === 'finished' ? 'Play again' : 'Retry hole' },
-      { id: 'home', label: 'Lab menu' },
     ]);
   }
 

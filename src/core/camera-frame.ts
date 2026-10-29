@@ -28,8 +28,10 @@ import { CanvasPanel } from './panel.js';
 export const SHOT_W = 480;
 export const SHOT_H = 270;
 const MAX_SHOTS = 12;
-/** Both pinches must start this close together for a frame to begin. */
+/** Both pinches must start this close together for a frame to begin... */
 const START_GAP = 0.3;
+/** ...and within this many seconds of each other (a deliberate two-hand gesture). */
+const START_WINDOW = 0.4;
 const MIN_FRAME = 0.08;
 const UP = new Vector3(0, 1, 0);
 
@@ -77,6 +79,8 @@ export class FrameCamera {
   private readonly tmp = new Vector3();
   private armed = false;
   private framing = 0;
+  private clock = 0;
+  private readonly started = { left: -10, right: -10 };
 
   constructor(
     private readonly renderer: WebGLRenderer,
@@ -95,16 +99,25 @@ export class FrameCamera {
     return this.line.visible;
   }
 
+  /** True once both pinches have started together: apps should drop what those pinches began. */
+  get isArmed(): boolean {
+    return this.armed;
+  }
+
   /**
    * Track the gesture. Returns a caption when a shot was captured this frame.
    * `enabled` is false while the active prototype owns the pinches.
    */
   update(left: HandState, right: HandState, head: Vector3, enabled: boolean, dt: number): string | null {
+    this.clock += dt;
+    if (left.pinchStarted) this.started.left = this.clock;
+    if (right.pinchStarted) this.started.right = this.clock;
     const both = enabled && left.tracked && right.tracked && !left.isController && !right.isController && left.pinching && right.pinching;
     if (both) {
-      // Arm only when the second pinch starts near the first: a deliberate gesture.
+      // Arm only when both pinches start together, close to each other.
       if (!this.armed && (left.pinchStarted || right.pinchStarted)) {
-        this.armed = left.pinchPoint.distanceTo(right.pinchPoint) < START_GAP;
+        const together = Math.abs(this.started.left - this.started.right) < START_WINDOW;
+        this.armed = together && left.pinchPoint.distanceTo(right.pinchPoint) < START_GAP;
       }
       if (this.armed) {
         this.computeFrame(left.pinchPoint, right.pinchPoint, head);

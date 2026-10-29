@@ -31,6 +31,8 @@ export interface LabContext {
   readonly head: Vector3;
   /** Seconds since start. */
   readonly time: number;
+  /** True once a two-hand camera frame has started: drop whatever those pinches began. */
+  readonly frameArmed: boolean;
   /** True while the palm-up wrist menu is showing. */
   readonly wristMenuOpen: boolean;
   /** Where the mouse "pinch point" lands: a plane through point with normal. */
