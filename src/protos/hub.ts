@@ -6,12 +6,14 @@
 
 import { Group } from '@iwsdk/core';
 import type { LabContext, Prototype } from '../core/context.js';
+import { ACCENTS } from '../core/art.js';
 import { CanvasPanel } from '../core/panel.js';
 
 export class HubPrototype implements Prototype {
   readonly id = 'hub';
   readonly title = 'Lab';
   readonly tagline = 'Pick a prototype';
+  readonly accent = ACCENTS.hub;
   readonly deskRoot = new Group();
   readonly wallRoot = new Group();
   private ctx!: LabContext;
@@ -24,7 +26,7 @@ export class HubPrototype implements Prototype {
 
   init(ctx: LabContext): void {
     this.ctx = ctx;
-    this.panel = new CanvasPanel({ width: 0.46, height: 0.34, columns: 2, buttonHeight: 0.052 });
+    this.panel = new CanvasPanel({ width: 0.46, height: 0.34, columns: 2, buttonHeight: 0.05, accent: this.accent });
     this.panel.mesh.name = 'HubPanel';
     this.panel.mesh.position.set(0, 0.2, -0.1);
     this.panel.mesh.rotation.x = -0.18;
@@ -40,9 +42,10 @@ export class HubPrototype implements Prototype {
         ? 'Poke a button with your fingertip, or pinch on it. Turn your left palm toward you any time for the menu.'
         : 'Click a prototype, or press 0-5. Enter XR to use your hands.',
     );
-    this.panel.setButtons(
-      this.entries().map((p) => ({ id: p.id, label: p.title, sub: p.tagline, tone: 'default' as const })),
-    );
+    this.panel.setButtons([
+      ...this.entries().map((p) => ({ id: p.id, label: p.title, sub: p.tagline, accent: p.accent })),
+      { id: 'intro', label: 'Tutorial', sub: 'Learn the hand moves', accent: this.accent },
+    ]);
   }
 
   exit(): void {}

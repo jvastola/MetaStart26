@@ -30,6 +30,8 @@ export interface PanelButton {
   /** Optional second line under the label. */
   sub?: string;
   disabled?: boolean;
+  /** Colour stripe on the button's left edge. */
+  accent?: string;
 }
 
 export interface PanelOptions {
@@ -68,6 +70,8 @@ interface Rect {
 }
 
 export class CanvasPanel {
+  /** Every panel, so tests can find a button by id. */
+  static readonly all: CanvasPanel[] = [];
   readonly mesh: Mesh;
   eyebrow = '';
   title = '';
@@ -117,6 +121,25 @@ export class CanvasPanel {
     });
     this.mesh = new Mesh(new PlaneGeometry(this.opts.width, this.opts.height), material);
     this.mesh.renderOrder = 10;
+    CanvasPanel.all.push(this);
+  }
+
+  /** World-space centre of a button, for automated pokes. Null if absent. */
+  buttonWorld(id: string): Vector3 | null {
+    const index = this.buttons.findIndex((b) => b.id === id);
+    if (index < 0 || !isVisible(this.mesh)) return null;
+    if (this.dirty) this.redraw();
+    const r = this.rects[index];
+    const x = ((r.x + r.w / 2) / this.w - 0.5) * this.opts.width;
+    const y = (0.5 - (r.y + r.h / 2) / this.h) * this.opts.height;
+    this.mesh.updateMatrixWorld(true);
+    return this.mesh.localToWorld(new Vector3(x, y, 0));
+  }
+
+  /** The panel's facing direction in world space. */
+  normalWorld(): Vector3 {
+    this.mesh.updateMatrixWorld(true);
+    return new Vector3(0, 0, 1).transformDirection(this.mesh.matrixWorld);
   }
 
   setText(eyebrow: string, title: string, body: string | string[]): void {
@@ -133,7 +156,7 @@ export class CanvasPanel {
       buttons.length === this.buttons.length &&
       buttons.every((b, i) => {
         const o = this.buttons[i];
-        return o.id === b.id && o.label === b.label && o.tone === b.tone && o.sub === b.sub && o.disabled === b.disabled;
+        return o.id === b.id && o.label === b.label && o.tone === b.tone && o.sub === b.sub && o.disabled === b.disabled && o.accent === b.accent;
       });
     if (same) return;
     this.buttons = buttons;
@@ -156,7 +179,8 @@ export class CanvasPanel {
     this.flash = index;
     this.flashTime = 0.2;
     this.dirty = true;
-    Sfx.click();
+    this.mesh.getWorldPosition(this.local);
+    Sfx.click(this.local);
     this.onPress(id);
   }
 
@@ -205,6 +229,10 @@ export class CanvasPanel {
       }
     }
     if (hover !== this.hover) {
+      if (hover >= 0 && pointers.some((p) => p.tracked && !p.isMouse)) {
+        this.mesh.getWorldPosition(this.local);
+        Sfx.hover(this.local);
+      }
       this.hover = hover;
       this.dirty = true;
     }
@@ -296,8 +324,11 @@ export class CanvasPanel {
     ctx.textBaseline = 'top';
     if (this.eyebrow) {
       ctx.fillStyle = this.opts.accent;
+      ctx.beginPath();
+      ctx.arc(pad + 2 * u, y + 2.6 * u, 2 * u, 0, Math.PI * 2);
+      ctx.fill();
       ctx.font = `700 ${6 * u}px system-ui, sans-serif`;
-      ctx.fillText(this.eyebrow.toUpperCase(), pad, y);
+      ctx.fillText(this.eyebrow.toUpperCase(), pad + 7 * u, y);
       y += 9 * u;
     }
     if (this.title) {
@@ -331,6 +362,14 @@ export class CanvasPanel {
       ctx.globalAlpha = b.disabled ? 0.4 : 1;
       ctx.fillStyle = fill;
       ctx.fill();
+      if (b.accent && i !== this.flash) {
+        ctx.save();
+        roundRect(ctx, r.x, r.y, r.w, r.h, 7 * u);
+        ctx.clip();
+        ctx.fillStyle = b.accent;
+        ctx.fillRect(r.x, r.y, 3.5 * u, r.h);
+        ctx.restore();
+      }
       ctx.fillStyle = i === this.flash ? '#10241b' : THEME.text;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';

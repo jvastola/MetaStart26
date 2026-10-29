@@ -30,6 +30,7 @@ import {
   WebGLRenderTarget,
 } from '@iwsdk/core';
 import type { LabContext, Prototype } from '../../core/context.js';
+import { ACCENTS, blobShadow } from '../../core/art.js';
 import { type HandState, pointerDistance } from '../../core/hands.js';
 import { CanvasPanel } from '../../core/panel.js';
 import { Sfx } from '../../core/sfx.js';
@@ -57,6 +58,12 @@ export class ShotBoardPrototype implements Prototype {
   readonly id = 'shotboard';
   readonly title = 'Shot Board';
   readonly tagline = 'Frame shots with your hands';
+  readonly accent = ACCENTS.shotboard;
+  readonly howTo = [
+    'Pinch a figure to move it around the stage.',
+    'Pinch with BOTH hands and pull apart to frame a shot.',
+    'Let go to capture. Play runs your storyboard.',
+  ];
   readonly deskRoot = new Group();
   readonly wallRoot = new Group();
 
@@ -81,7 +88,7 @@ export class ShotBoardPrototype implements Prototype {
     this.ctx = ctx;
     this.buildStage();
 
-    this.panel = new CanvasPanel({ width: 0.36, height: 0.13, columns: 4, buttonHeight: 0.034, accent: '#ffcf70' });
+    this.panel = new CanvasPanel({ width: 0.36, height: 0.13, columns: 4, buttonHeight: 0.034, accent: this.accent });
     this.panel.mesh.name = 'ShotPanel';
     // Off to the right of the stage, angled toward the user.
     this.panel.mesh.position.set(STAGE_W / 2 + 0.13, 0.085, -0.02);
@@ -90,7 +97,7 @@ export class ShotBoardPrototype implements Prototype {
     this.deskRoot.add(this.panel.mesh);
 
     // Storyboard on the wall: a 3 x 2 grid of shots.
-    this.board = new CanvasPanel({ width: 0.66, height: 0.38, columns: 1, accent: '#ffcf70' });
+    this.board = new CanvasPanel({ width: 0.66, height: 0.38, columns: 1, accent: this.accent });
     this.board.setText('Storyboard', '', '');
     this.wallRoot.add(this.board.mesh);
     this.preview = new Mesh(new PlaneGeometry(0.56, 0.315), new MeshBasicMaterial({ color: '#ffffff' }));
@@ -167,6 +174,7 @@ export class ShotBoardPrototype implements Prototype {
       group.position.set(x, 0.008, z);
       group.rotation.y = yaw;
       group.name = name;
+      group.add(blobShadow(name === 'House' ? 0.09 : 0.05));
       this.deskRoot.add(group);
       this.props.push({ group, name });
     }
@@ -221,7 +229,7 @@ export class ShotBoardPrototype implements Prototype {
         if (prop) {
           this.drag = { prop, hand };
           this.selected = prop;
-          Sfx.pinch();
+          Sfx.pinch(hand.pinchPoint);
           break;
         }
       }
@@ -231,7 +239,7 @@ export class ShotBoardPrototype implements Prototype {
     if (!hand.pinching || !hand.tracked) {
       prop.group.position.y = 0.008;
       this.drag = null;
-      Sfx.place();
+      Sfx.place(prop.group.getWorldPosition(this.tmp));
       return;
     }
     this.tmp.copy(hand.pinchPoint);

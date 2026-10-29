@@ -43,3 +43,6 @@ pids/
 .cursor/mcp.json
 .vscode/mcp.json
 .codex/config.toml
+
+# Video tool outputs
+tools/video/out/

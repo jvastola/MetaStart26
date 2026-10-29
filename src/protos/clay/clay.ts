@@ -24,6 +24,7 @@ import {
   Vector3,
 } from '@iwsdk/core';
 import { type LabContext, type Prototype, store } from '../../core/context.js';
+import { ACCENTS, blobShadow } from '../../core/art.js';
 import type { HandState } from '../../core/hands.js';
 import { CanvasPanel } from '../../core/panel.js';
 import { Sfx } from '../../core/sfx.js';
@@ -57,6 +58,12 @@ export class ClayPrototype implements Prototype {
   readonly id = 'clay';
   readonly title = 'Clay';
   readonly tagline = 'Sculpt with your fingertips';
+  readonly accent = ACCENTS.clay;
+  readonly howTo = [
+    'Press your fingertips into the clay to dent it.',
+    'Pinch the surface and pull to drag clay out.',
+    'Pinch the gold rim and drag to spin the turntable.',
+  ];
   readonly deskRoot = new Group();
   readonly wallRoot = new Group();
 
@@ -94,7 +101,7 @@ export class ClayPrototype implements Prototype {
     rim.position.y = 0.016;
     const post = new Mesh(new CylinderGeometry(0.008, 0.008, CLAY_Y - RADIUS * 0.6, 12), new MeshStandardMaterial({ color: '#444a55' }));
     post.position.y = (CLAY_Y - RADIUS * 0.6) / 2 + 0.016;
-    this.deskRoot.add(base, rim);
+    this.deskRoot.add(base, rim, blobShadow(0.3));
     this.turntable.add(post);
     this.deskRoot.add(this.turntable);
 
@@ -115,7 +122,7 @@ export class ClayPrototype implements Prototype {
     this.clay.frustumCulled = false;
     this.turntable.add(this.clay);
 
-    this.panel = new CanvasPanel({ width: 0.4, height: 0.15, columns: 5, buttonHeight: 0.03, accent: '#f4b860' });
+    this.panel = new CanvasPanel({ width: 0.4, height: 0.15, columns: 5, buttonHeight: 0.03, accent: this.accent });
     this.panel.mesh.name = 'ClayPanel';
     // Beside the turntable so the clay stays unobstructed.
     this.panel.mesh.position.set(0.31, 0.09, -0.04);
@@ -230,7 +237,7 @@ export class ClayPrototype implements Prototype {
       if (nearestDistance(this.positions, l.x, l.y, l.z) > 0.02) continue;
       this.snapshot();
       this.pulls.push({ hand, grab: grabAt(this.positions, l.x, l.y, l.z, PULL_RADIUS, this.mirror ? this.mirrorMap : undefined), start: l.clone() });
-      Sfx.pinch();
+      Sfx.pinch(hand.pinchPoint);
     }
     this.applyPulls();
   }
@@ -304,7 +311,7 @@ export class ClayPrototype implements Prototype {
         const r = Math.hypot(this.tmp.x, this.tmp.z);
         if (r > TABLE_R - 0.025 && r < TABLE_R + 0.03 && this.tmp.y < 0.05 && this.tmp.y > -0.02) {
           this.spin = { hand, last: Math.atan2(this.tmp.x, this.tmp.z) };
-          Sfx.pinch();
+          Sfx.pinch(hand.pinchPoint);
           return;
         }
       }

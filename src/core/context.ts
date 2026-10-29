@@ -29,6 +29,8 @@ export interface LabContext {
   readonly head: Vector3;
   /** Seconds since start. */
   readonly time: number;
+  /** True while the palm-up wrist menu is showing. */
+  readonly wristMenuOpen: boolean;
   /** Where the mouse "pinch point" lands: a plane through point with normal. */
   setMousePlane(point: Vector3, normal: Vector3): void;
   toast(text: string): void;
@@ -39,6 +41,10 @@ export interface Prototype {
   readonly id: string;
   readonly title: string;
   readonly tagline: string;
+  /** Accent colour: desk mat rim, pinch cursor, hub stripe. */
+  readonly accent: string;
+  /** Short how-to lines shown the first time the prototype opens. */
+  readonly howTo?: string[];
   readonly deskRoot: Group;
   readonly wallRoot: Group;
   /** Called once, before the first enter. */

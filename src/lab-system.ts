@@ -24,6 +24,7 @@ import {
   XRAnchor,
   XRPlane,
 } from '@iwsdk/core';
+import { DeskMat, HandCursor, HandSkeleton } from './core/art.js';
 import { type LabContext, type Prototype, store } from './core/context.js';
 import { HandState, Hands } from './core/hands.js';
 import { CanvasPanel } from './core/panel.js';
@@ -34,6 +35,7 @@ import { ConjurePrototype } from './protos/conjure/conjure.js';
 import { FocusPrototype } from './protos/focus/focus.js';
 import { GolfPrototype } from './protos/golf/golf.js';
 import { HubPrototype } from './protos/hub.js';
+import { INTRO_DONE_KEY, IntroPrototype } from './protos/intro.js';
 import { ShotBoardPrototype } from './protos/shotboard/shotboard.js';
 
 const DESKTOP_DESK = new Vector3(0, 0.75, -0.5);
@@ -48,7 +50,13 @@ interface SavedPose {
 export class LabSystem extends createSystem({
   planes: { required: [XRPlane] },
 }) {
-  private ctx!: LabContext & { immersive: boolean; time: number; pointers: readonly HandState[] };
+  private ctx!: LabContext & { immersive: boolean; time: number; pointers: readonly HandState[]; wristMenuOpen: boolean };
+  private mat!: DeskMat;
+  private cursors: HandCursor[] = [];
+  private skeletons: HandSkeleton[] = [];
+  private coach!: CanvasPanel;
+  private coachTime = 0;
+  private readonly forward = new Vector3();
   private hands!: Hands;
   private mouse!: HandState;
   private room!: Group;
@@ -110,6 +118,7 @@ export class LabSystem extends createSystem({
       wall: this.wall,
       head: this.head,
       time: 0,
+      wristMenuOpen: false,
       setMousePlane(point: Vector3, normal: Vector3) {
         system.mousePlanePoint.copy(point);
         system.mousePlaneNormal.copy(normal).normalize();
@@ -121,7 +130,7 @@ export class LabSystem extends createSystem({
     this.buildChrome();
     this.setupMouse();
 
-    const hub = new HubPrototype(() => this.protos.filter((p) => p.id !== 'hub'), (id) => this.go(id));
+    const hub = new HubPrototype(() => this.protos.filter((p) => p.id !== 'hub' && p.id !== 'intro'), (id) => this.go(id));
     this.protos = [
       hub,
       new FocusPrototype(),
@@ -129,6 +138,7 @@ export class LabSystem extends createSystem({
       new ShotBoardPrototype(),
       new ClayPrototype(),
       new GolfPrototype(),
+      new IntroPrototype(() => this.go('hub')),
     ];
     for (const p of this.protos) {
       p.deskRoot.visible = false;
@@ -154,7 +164,9 @@ export class LabSystem extends createSystem({
 
     this.placeDesktop();
     const requested = new URLSearchParams(location.search).get('p');
-    this.go(requested && this.protos.some((p) => p.id === requested) ? requested : 'hub');
+    // First launch opens the tutorial; ?p=<id> always wins.
+    const first = store.get<boolean>(INTRO_DONE_KEY, false) ? 'hub' : 'intro';
+    this.go(requested && this.protos.some((p) => p.id === requested) ? requested : first);
     this.buildDomNav();
     this.exposeDebugHooks();
   }
@@ -179,7 +191,10 @@ export class LabSystem extends createSystem({
     this.ctx.setMousePlane(this.tmp, this.tmp2.set(0, 1, 0));
     next.deskRoot.visible = this.setup === 'ready';
     next.wallRoot.visible = this.setup === 'ready';
+    this.mat.setAccent(next.accent);
+    for (const c of this.cursors) c.setAccent(next.accent);
     next.enter();
+    this.showHowTo(next, false);
     this.updateDomNav();
     try {
       const url = new URL(location.href);
@@ -210,6 +225,7 @@ export class LabSystem extends createSystem({
   }
 
   private showActive(show: boolean): void {
+    this.mat.mesh.visible = show;
     if (!this.active) return;
     this.active.deskRoot.visible = show;
     this.active.wallRoot.visible = show;
@@ -296,7 +312,10 @@ export class LabSystem extends createSystem({
 
     // Wall: from planes when we can, else 42 cm behind the desk.
     const planes = this.queries.planes.entities as unknown as Entity[];
-    if (findWall(planes, this.head, worldPos, this.foundWall)) {
+    // Only use a real wall within arm's reach; otherwise stand the board behind the desk.
+    const wallFound = findWall(planes, this.head, worldPos, this.foundWall);
+    const wallReach = Math.hypot(this.foundWall.position.x - this.head.x, this.foundWall.position.z - this.head.z);
+    if (wallFound && wallReach < 1.1) {
       const w = this.room.worldToLocal(this.tmp2.copy(this.foundWall.position));
       this.setPose(this.wall, w, this.foundWall.yaw - roomYawAngle);
     } else {
@@ -312,8 +331,9 @@ export class LabSystem extends createSystem({
     this.ghost.visible = false;
     this.setupPanel.mesh.visible = false;
     this.showActive(true);
-    Sfx.place();
+    Sfx.place(worldPos);
     this.toast(message);
+    if (!store.get<boolean>(INTRO_DONE_KEY, false)) this.go('intro');
   }
 
   private applySaved(saved: SavedPose): void {
@@ -346,6 +366,15 @@ export class LabSystem extends createSystem({
       this.hands.update(this.world.xrFrame, this.world.xrReferenceSpace, this.player.matrixWorld, dt);
     }
     this.updateMouse();
+    this.camera.getWorldDirection(this.forward);
+    Sfx.setListener(this.head.x, this.head.y, this.head.z, this.forward.x, this.forward.y, this.forward.z);
+    const handsVisible = this.ctx.immersive;
+    this.cursors[0].update(this.hands.left, this.head, handsVisible);
+    this.cursors[1].update(this.hands.right, this.head, handsVisible);
+    if (this.skeletons.length) {
+      this.skeletons[0].update(this.hands.left, handsVisible);
+      this.skeletons[1].update(this.hands.right, handsVisible);
+    }
     if (this.world.visibilityState.peek() === VisibilityState.VisibleBlurred) return;
 
     this.updateToast(dt);
@@ -355,7 +384,28 @@ export class LabSystem extends createSystem({
       return;
     }
     this.updateWristMenu(dt);
+    this.updateCoach(dt);
     this.active?.update(dt);
+  }
+
+  /** First-visit how-to card for a prototype (and on demand from the wrist menu). */
+  private showHowTo(proto: Prototype, force: boolean): void {
+    const key = `lab-howto-${proto.id}`;
+    if (!proto.howTo || (!force && store.get<boolean>(key, false))) {
+      this.coach.mesh.visible = false;
+      return;
+    }
+    store.set(key, true);
+    this.coach.setText(`How to use ${proto.title}`, '', proto.howTo.map((line, i) => `${i + 1}. ${line}`));
+    this.coach.mesh.visible = true;
+    this.coachTime = 30;
+  }
+
+  private updateCoach(dt: number): void {
+    if (!this.coach.mesh.visible) return;
+    this.coachTime -= dt;
+    if (this.coachTime <= 0) this.coach.mesh.visible = false;
+    this.coach.update(this.ctx.pointers, dt);
   }
 
   private updateWristMenu(dt: number): void {
@@ -363,6 +413,7 @@ export class LabSystem extends createSystem({
     const faces = this.ctx.immersive && left.tracked && left.palmFaces(this.head, this.wristOpen ? 0.35 : 0.65);
     if (faces !== this.wristOpen) {
       this.wristOpen = faces;
+      this.ctx.wristMenuOpen = faces;
       if (faces) Sfx.blip(900);
     }
     const panel = this.wristPanel;
@@ -426,13 +477,20 @@ export class LabSystem extends createSystem({
     this.setupPanel.mesh.visible = false;
     chrome.add(this.setupPanel.mesh);
 
-    this.wristPanel = new CanvasPanel({ width: 0.16, height: 0.11, columns: 2, buttonHeight: 0.032 });
+    this.wristPanel = new CanvasPanel({ width: 0.17, height: 0.14, columns: 2, buttonHeight: 0.03 });
     this.wristPanel.setButtons([
       { id: 'home', label: 'Home', tone: 'primary' },
       { id: 'move', label: 'Move desk' },
+      { id: 'help', label: 'How to' },
+      { id: 'mute', label: 'Sound' },
     ]);
     this.wristPanel.onPress = (id) => {
       if (id === 'home') this.go('hub');
+      if (id === 'help' && this.active) this.showHowTo(this.active, true);
+      if (id === 'mute') {
+        Sfx.setMuted(!Sfx.muted);
+        this.toast(Sfx.muted ? 'Sound off.' : 'Sound on.');
+      }
       if (id === 'move') {
         this.showActive(false);
         this.setup = 'manual';
@@ -441,6 +499,27 @@ export class LabSystem extends createSystem({
     };
     this.wristPanel.mesh.visible = false;
     chrome.add(this.wristPanel.mesh);
+
+    this.mat = new DeskMat();
+    this.desk.add(this.mat.mesh);
+    this.cursors = [new HandCursor(), new HandCursor()];
+    for (const c of this.cursors) chrome.add(c.group);
+    // ?skeleton=1 draws procedural hands (recordings, emulator without hand models).
+    if (new URLSearchParams(location.search).get('skeleton') === '1') {
+      this.hands.readAllJoints = true;
+      this.skeletons = [new HandSkeleton(), new HandSkeleton()];
+      for (const k of this.skeletons) chrome.add(k.group);
+    }
+
+    // How-to card: floats at the front-left of the desk, angled toward you.
+    this.coach = new CanvasPanel({ width: 0.26, height: 0.13, columns: 1, buttonHeight: 0.026 });
+    this.coach.mesh.name = 'HowToCard';
+    this.coach.setButtons([{ id: 'ok', label: 'Got it', tone: 'primary' }]);
+    this.coach.onPress = () => (this.coach.mesh.visible = false);
+    this.coach.mesh.position.set(-0.36, 0.14, 0.06);
+    this.coach.mesh.rotation.set(-0.2, 0.55, 0, 'YXZ');
+    this.coach.mesh.visible = false;
+    this.desk.add(this.coach.mesh);
 
     this.toastPanel = new CanvasPanel({ width: 0.26, height: 0.05, columns: 1 });
     this.toastPanel.mesh.visible = false;
@@ -553,6 +632,31 @@ export class LabSystem extends createSystem({
       go: (id: string) => this.go(id),
       active: () => this.active?.id,
       setup: () => this.setup,
+      wrist: () => this.ctx.wristMenuOpen,
+      button: (id: string) => {
+        for (const panel of CanvasPanel.all) {
+          const p = panel.buttonWorld(id);
+          if (p) {
+            const n = panel.normalWorld();
+            return { x: p.x, y: p.y, z: p.z, nx: n.x, ny: n.y, nz: n.z };
+          }
+        }
+        return null;
+      },
+      view: () => {
+        const f = this.camera.getWorldDirection(new Vector3());
+        return { head: this.head.toArray().map((v) => +v.toFixed(3)), forward: f.toArray().map((v) => +v.toFixed(3)) };
+      },
+      planes: () =>
+        [...(this.queries.planes.entities as Iterable<Entity>)].map((e) => {
+          const o = e.object3D!;
+          const p = o.getWorldPosition(new Vector3());
+          const n = new Vector3(0, 1, 0).applyQuaternion(o.getWorldQuaternion(o.quaternion.clone()));
+          const plane = e.getValue(XRPlane, '_plane') as (XRPlane & { semanticLabel?: string }) | undefined;
+          return { label: plane?.semanticLabel ?? '', at: p.toArray().map((v) => +v.toFixed(2)), up: +n.y.toFixed(2) };
+        }),
+      coach: () => (this.coach.mesh.visible ? this.coach.title || this.coach.eyebrow : null),
+      pressCoach: () => this.coach.press('ok'),
       state: () => this.active?.debugState?.() ?? null,
       act: (name: string, ...args: unknown[]) => {
         const fn = this.active?.debugActions?.[name] as ((...a: unknown[]) => unknown) | undefined;

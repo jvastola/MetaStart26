@@ -40,6 +40,16 @@ const EXTRA_JOINTS = [
   'pinky-finger-metacarpal',
 ] as const;
 
+/** All 25 WebXR hand joints, in spec order (used by the optional skeleton view). */
+export const ALL_JOINTS: XRHandJoint[] = [
+  'wrist',
+  'thumb-metacarpal', 'thumb-phalanx-proximal', 'thumb-phalanx-distal', 'thumb-tip',
+  'index-finger-metacarpal', 'index-finger-phalanx-proximal', 'index-finger-phalanx-intermediate', 'index-finger-phalanx-distal', 'index-finger-tip',
+  'middle-finger-metacarpal', 'middle-finger-phalanx-proximal', 'middle-finger-phalanx-intermediate', 'middle-finger-phalanx-distal', 'middle-finger-tip',
+  'ring-finger-metacarpal', 'ring-finger-phalanx-proximal', 'ring-finger-phalanx-intermediate', 'ring-finger-phalanx-distal', 'ring-finger-tip',
+  'pinky-finger-metacarpal', 'pinky-finger-phalanx-proximal', 'pinky-finger-phalanx-intermediate', 'pinky-finger-phalanx-distal', 'pinky-finger-tip',
+];
+
 /** Gamepad button index for each microgesture on a Quest hand. */
 const MICRO_BUTTONS: [number, Microgesture][] = [
   [5, 'left'],
@@ -71,6 +81,8 @@ export class HandState {
   /** Mouse only: the pointer ray. */
   readonly rayOrigin = new Vector3();
   readonly rayDir = new Vector3(0, 0, -1);
+  /** All joints in world space; filled only when `Hands.readAllJoints` is on. */
+  readonly joints: Vector3[] = ALL_JOINTS.map(() => new Vector3());
 
   private readonly lastIndex = new Vector3();
   private readonly lastPinch = new Vector3();
@@ -163,6 +175,8 @@ export class Hands {
   readonly left = new HandState('left');
   readonly right = new HandState('right');
   readonly both: readonly HandState[] = [this.left, this.right];
+  /** Also read every joint (for the skeleton view). Off by default to save work. */
+  readAllJoints = false;
   private readonly seen = { left: false, right: false };
   private readonly meta = [new Vector3(), new Vector3(), new Vector3()];
 
@@ -211,6 +225,9 @@ export class Hands {
     };
     for (let i = 0; i < TIP_JOINTS.length; i += 1) {
       if (!read(TIP_JOINTS[i], state.tips[i])) return false;
+    }
+    if (this.readAllJoints) {
+      for (let i = 0; i < ALL_JOINTS.length; i += 1) read(ALL_JOINTS[i], state.joints[i]);
     }
     return (
       read(EXTRA_JOINTS[0], state.wrist) &&

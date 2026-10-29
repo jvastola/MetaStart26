@@ -25,6 +25,7 @@ import {
 } from '@iwsdk/core';
 import { Burst } from '../../core/burst.js';
 import type { LabContext, Prototype } from '../../core/context.js';
+import { ACCENTS, blobShadow } from '../../core/art.js';
 import { type HandState, pointerDistance } from '../../core/hands.js';
 import { CanvasPanel } from '../../core/panel.js';
 import { Sfx } from '../../core/sfx.js';
@@ -77,6 +78,12 @@ export class ConjurePrototype implements Prototype {
   readonly id = 'conjure';
   readonly title = 'Conjure';
   readonly tagline = 'Voice to 3D on your desk';
+  readonly accent = ACCENTS.conjure;
+  readonly howTo = [
+    'Press Speak and say what you want, or pinch an idea.',
+    'Follow up: "make it blue", "bigger", "another one".',
+    'Pinch a creation to move it; use both hands to scale.',
+  ];
   readonly deskRoot = new Group();
   readonly wallRoot = new Group();
 
@@ -109,7 +116,7 @@ export class ConjurePrototype implements Prototype {
     this.deskRoot.add(pedestal, rim, this.orbit);
     this.burst = new Burst(this.deskRoot, '#b48cff');
 
-    this.panel = new CanvasPanel({ width: 0.38, height: 0.16, columns: 4, buttonHeight: 0.032, accent: '#c7a6ff' });
+    this.panel = new CanvasPanel({ width: 0.38, height: 0.16, columns: 4, buttonHeight: 0.032, accent: this.accent });
     this.panel.mesh.name = 'ConjurePanel';
     this.panel.mesh.position.set(0, 0.09, -0.19);
     this.panel.mesh.rotation.x = -0.3;
@@ -176,7 +183,7 @@ export class ConjurePrototype implements Prototype {
   private create(prompt: string, variation = 0): void {
     const { object, recipe } = buildFromPrompt(prompt, variation);
     const holder = new Group();
-    holder.add(object);
+    holder.add(object, blobShadow(0.13));
     const item: Item = { holder, content: object, prompt, recipe, source: 'sketch', variation, spin: false, free: false, radius: 0.08 };
     this.items.unshift(item);
     this.deskRoot.add(holder);
@@ -185,7 +192,7 @@ export class ConjurePrototype implements Prototype {
     this.restack();
     if (this.items.length > MAX_ITEMS) this.remove(this.items[this.items.length - 1]);
     this.burst.fire(this.tmp.copy(PEDESTAL).setY(0.06));
-    Sfx.whoosh();
+    Sfx.whoosh(this.deskRoot.localToWorld(this.tmp2.copy(PEDESTAL)));
     this.status = recipe === 'abstract' ? `Sketched "${prompt}" (abstract).` : `Sketched a ${recipe} for "${prompt}".`;
     if (this.provider !== 'sketch') void this.generateRemote(item, this.provider);
   }
@@ -232,7 +239,7 @@ export class ConjurePrototype implements Prototype {
     item.holder.add(model);
     item.content = model;
     item.source = source;
-    Sfx.success();
+    Sfx.success(item.holder.getWorldPosition(this.tmp2));
     this.burst.fire(this.tmp.copy(item.holder.position).setY(0.08));
     this.status = `Here is your ${item.prompt}, made with ${source}.`;
   }
@@ -312,7 +319,7 @@ export class ConjurePrototype implements Prototype {
       }
       const world = item.holder.getWorldPosition(new Vector3());
       this.holds.push({ item, hand, offset: world.sub(hand.pinchPoint) });
-      Sfx.pinch();
+      Sfx.pinch(hand.pinchPoint);
     }
 
     if (this.twoHand) {
@@ -356,7 +363,7 @@ export class ConjurePrototype implements Prototype {
     } else {
       hold.item.free = true;
     }
-    Sfx.place();
+    Sfx.place(hold.item.holder.getWorldPosition(this.tmp2));
   }
 
   private itemNear(hand: HandState): Item | null {

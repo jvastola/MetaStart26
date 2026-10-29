@@ -31,9 +31,30 @@ npm run build
 - **Desktop:** the mouse stands in for a pinching hand. Use the buttons at the
   bottom of the page or keys `0`-`5` to switch prototypes, or open `?p=focus`
   (also `conjure`, `shotboard`, `clay`, `golf`, `hub`).
+- **`?skeleton=1`** draws procedural hands. Use it for recordings, or when the
+  stock hand models cannot load (they come from a CDN).
 - **Quest on the same Wi-Fi:** run `npx @iwsdk/cli dev status` and open the
   `runtimeUrls.network` address in the Quest browser. Accept the local
   certificate, then press Enter XR.
+
+## First use
+
+1. Put on the headset and open the link. Press **Enter XR**.
+2. The lab looks for your desk in your Space Setup and puts a soft desk mat on
+   it ("Found your table"). If it can't find one, hold your hand over the
+   desk and pinch.
+3. A **40-second tutorial** teaches the four moves by doing them. A ghost
+   fingertip demonstrates each one:
+   1. poke a glowing button;
+   2. pinch an orb and carry it into a ring;
+   3. pinch a dial's rim and twist it;
+   4. turn your left palm toward you to open the menu.
+4. The hub opens. The first time you enter each prototype, a **How to** card
+   explains it in three lines. Bring it back any time with palm up, then
+   **How to**.
+
+Replay the tutorial from the hub's **Tutorial** button. To reset first-use
+state, clear the site's storage.
 
 ## How the hands work
 
@@ -47,10 +68,26 @@ interaction is **direct touch**, not rays:
 | Pinch with both hands on one object | Scale and turn it (Conjure) |
 | Pinch with both hands and pull apart | Frame a camera shot (Shot Board) |
 | Pinch a dial or rim and move around it | Twist it (timer, turntable) |
-| Turn your left palm toward your face | Wrist menu: Home, Move desk |
+| Turn your left palm toward your face | Wrist menu: Home, Move desk, How to, Sound |
 | Thumb microgestures (thumb tap, swipe on the index finger) | Shortcuts: start/pause, next card, undo, bigger/smaller, rotate |
 
 There is no locomotion: the experience is designed to be used seated.
+
+**Feedback without haptics.** A pinch cursor between thumb and index closes
+as they come together and fills with the prototype's colour when the pinch
+registers. Every interaction also has a sound, synthesised at runtime (no
+audio files) and positioned in the room where it happened:
+- a soft tick on press;
+- a pluck on grab;
+- a wooden thud on drop;
+- a bell chord on success.
+
+A quiet ambient bed plays during Desk Focus sessions. **Sound** in the wrist
+menu mutes everything.
+
+**Look.** Each prototype has an accent colour, used for its desk mat rim,
+pinch cursor and hub stripe. Blob shadows make the virtual objects sit on the
+real desk under passthrough.
 
 **First launch.** The host looks for a table plane in front of you from the
 headset's Space Setup and puts the workspace on it. It finds the wall behind it
@@ -101,12 +138,29 @@ the response shapes in `api/gen3d.ts` against their current docs before relying
 on it. Tripo's model download host in particular may need adding to
 `GEN3D_ALLOWED_HOSTS`.
 
+## Video
+
+`docs/VIDEO_SCRIPT.md` has the shot list for the real Quest capture (under 3
+minutes, honest device footage).
+
+`tools/video/` produces an emulator rough cut, with every frame labelled as
+emulator footage. It drives the app with emulated hands, records it, rebuilds
+the app's sound from a logged event track, then burns in captions:
+
+```bash
+npm run dev                      # keep the dev server running
+node tools/video/record.cjs      # PLAYWRIGHT_MODULE / CHROMIUM_PATH pick an existing install
+python3 tools/video/assemble.py  # writes tools/video/out/hands-lab-walkthrough.mp4
+```
+
 ## Layout
 
 ```
 src/lab-system.ts        host: input, desk/wall setup, anchored room, wrist menu, navigation
 src/core/                hands + microgestures, canvas panels, surfaces, voice, sfx
 src/protos/hub.ts        launcher
+src/protos/intro.ts      first-use tutorial (poke, carry, twist, palm menu)
+src/core/art.ts          desk mat, blob shadows, pinch cursor, accent colours
 src/protos/focus/        Desk Focus (focus-store.ts is the pure data model)
 src/protos/conjure/      Conjure (intent.ts parser, kit.ts offline generator, remote.ts client)
 src/protos/shotboard/    Shot Board
@@ -123,27 +177,32 @@ For the automated browser tests, `window.lab` exposes `go(id)`, `state()`,
 
 **Verified** in desktop Chromium and in the IWER emulator with emulated hands:
 - every prototype's main interaction;
-- pinch-to-place desk setup;
+- the **whole tutorial**: fingertip poke, pinch-carry, twist, and the palm-up
+  wrist menu;
+- auto-placing the desk on the emulated room's labelled table;
+- pinch-to-place fallback;
 - carrying a card to the focus pad;
 - the timer dial twist;
 - fingertip dents in the clay;
-- two-hand shot framing.
+- two-hand shot framing;
+- first-visit how-to cards.
 
 The 39 unit tests, typecheck and production build pass.
 
 **Not yet verified on a real Quest:**
-- plane-detected desk and wall placement in a real room;
+- plane detection in a real room;
 - persistent anchor restore across sessions;
 - microgesture button mapping;
 - Web Speech API availability in the Quest browser (every voice path has a
   pinch fallback);
+- the feel of the palm threshold;
 - frame rate;
-- the wrist menu's palm-facing threshold.
+- how the positional (HRTF) audio sounds on the Quest speakers.
 
 ## Competition checklist
 
 - [ ] Pick the entry and cut the other prototypes from the submitted build (or keep the hub).
 - [ ] Device test on Quest 3 / 3S. Profile to 72 fps+ with the Meta VR CLI performance tools.
 - [ ] Deploy (Vercel recommended for the AI proxy; GitHub Pages works without it).
-- [ ] Record a real-footage video under 3 minutes. Lead with the strongest moment.
+- [ ] Record a real-footage video under 3 minutes following `docs/VIDEO_SCRIPT.md`.
 - [ ] Devpost form: Productivity track, New Experience division, description, how hands are used.

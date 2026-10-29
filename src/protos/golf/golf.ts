@@ -11,6 +11,7 @@
 
 import { Group, Vector3 } from '@iwsdk/core';
 import type { LabContext, Prototype } from '../../core/context.js';
+import { ACCENTS } from '../../core/art.js';
 import type { HandState } from '../../core/hands.js';
 import { CanvasPanel } from '../../core/panel.js';
 import { Sfx } from '../../core/sfx.js';
@@ -42,6 +43,12 @@ export class GolfPrototype implements Prototype {
   readonly id = 'golf';
   readonly title = 'Desk Links';
   readonly tagline = 'Gaming: fingertip mini golf';
+  readonly accent = ACCENTS.golf;
+  readonly howTo = [
+    'Pinch near the ball, pull back, let go to putt.',
+    'Or flick the ball with a fingertip.',
+    'Sink it in as few strokes as you can.',
+  ];
   readonly deskRoot = new Group();
   readonly wallRoot = new Group();
 
@@ -68,6 +75,8 @@ export class GolfPrototype implements Prototype {
   init(ctx: LabContext): void {
     this.ctx = ctx;
     this.view = new BoardView();
+    // Sit the board on top of the shared desk mat (its fringe hangs 8 mm below the green).
+    this.view.root.position.y = 0.009;
     this.deskRoot.add(this.view.root);
     this.panel = new CanvasPanel({ width: 0.3, height: 0.13, columns: 2, buttonHeight: 0.03 });
     this.panel.mesh.position.set(0, 0.1, -BOARD_DEPTH / 2 - 0.06);
@@ -123,7 +132,7 @@ export class GolfPrototype implements Prototype {
     this.strokes += 1;
     this.dragHand = null;
     this.view.hideAim();
-    Sfx.putt(power);
+    Sfx.putt(power, this.view.ball.getWorldPosition(this.tmp2));
     this.setPhase('rolling');
   }
 
@@ -179,7 +188,7 @@ export class GolfPrototype implements Prototype {
         if (vertical) reach = Math.max(reach, 1 - Math.min(1, Math.max(0, (d - GRAB_RADIUS) / 0.08)));
         if (hand.pinchStarted && vertical && d < GRAB_RADIUS) {
           this.dragHand = hand;
-          Sfx.pinch();
+          Sfx.pinch(hand.pinchPoint);
           break;
         }
         if (!hand.isMouse && this.tryFlick(hand)) return;
@@ -255,9 +264,9 @@ export class GolfPrototype implements Prototype {
 
   private updateRolling(dt: number): void {
     const result = this.sim.step(dt);
-    if (result.impact > 0.06) Sfx.wall(result.impact);
+    if (result.impact > 0.06) Sfx.wall(result.impact, this.view.ball.getWorldPosition(this.tmp2));
     if (result.sunk) {
-      Sfx.sink();
+      Sfx.sink(this.view.ball.getWorldPosition(this.tmp2));
       this.setPhase('sunk');
       return;
     }

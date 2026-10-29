@@ -32,6 +32,7 @@ import {
 } from '@iwsdk/core';
 import { Burst } from '../../core/burst.js';
 import type { LabContext, Prototype } from '../../core/context.js';
+import { ACCENTS, blobShadow } from '../../core/art.js';
 import type { HandState } from '../../core/hands.js';
 import { CanvasPanel, roundRect, THEME, wrap } from '../../core/panel.js';
 import { Sfx } from '../../core/sfx.js';
@@ -120,6 +121,12 @@ export class FocusPrototype implements Prototype {
   readonly id = 'focus';
   readonly title = 'Desk Focus';
   readonly tagline = 'Planner pinned to your real room';
+  readonly accent = ACCENTS.focus;
+  readonly howTo = [
+    'Pinch a card on the wall and carry it to the blue FOCUS pad.',
+    'Pinch the dial rim and twist to set minutes; let go to start.',
+    'Done? Drop the card in the green tray, or flick it away.',
+  ];
   readonly deskRoot = new Group();
   readonly wallRoot = new Group();
 
@@ -144,6 +151,7 @@ export class FocusPrototype implements Prototype {
   private listening = '';
   private sampleIndex = 0;
   private plantKey = '';
+  private ambientOn = false;
 
   private readonly tmp = new Vector3();
   private readonly tmp2 = new Vector3();
@@ -190,6 +198,8 @@ export class FocusPrototype implements Prototype {
     this.twist = null;
     this.voice.stop();
     this.listening = '';
+    this.ambientOn = false;
+    Sfx.ambient(false);
   }
 
   // ------------------------------------------------------------ build
@@ -217,6 +227,7 @@ export class FocusPrototype implements Prototype {
       wall.position.set(x, 0.01, z);
       tray.add(wall);
     }
+    tray.add(blobShadow(0.2, 0.15));
     tray.position.copy(TRAY);
     const trayLabel = labelPlane('DONE', 0.05, '#bff0d8');
     trayLabel.position.set(0, 0.005, 0);
@@ -238,10 +249,14 @@ export class FocusPrototype implements Prototype {
     this.dialKnob = new Mesh(new BoxGeometry(0.006, 0.01, 0.03), new MeshStandardMaterial({ color: '#f4b860' }));
     this.dialKnob.position.y = 0.018;
     this.dial.add(base, face, this.dialKnob);
+    this.dial.add(blobShadow(0.13));
     this.dial.position.copy(DIAL);
     this.deskRoot.add(this.dial);
 
     this.plant.position.copy(PLANT);
+    const plantShadow = blobShadow(0.1);
+    plantShadow.position.copy(PLANT).setY(0.0012);
+    this.deskRoot.add(plantShadow);
     this.deskRoot.add(this.plant);
   }
 
@@ -258,6 +273,11 @@ export class FocusPrototype implements Prototype {
     this.updateGrabs();
     this.layoutCards(dt);
     this.burst.update(dt);
+    // A soft ambient bed plays while a focus session runs.
+    if (this.running !== this.ambientOn) {
+      this.ambientOn = this.running;
+      Sfx.ambient(this.running);
+    }
     this.drawDial();
     this.refresh();
   }
@@ -268,7 +288,7 @@ export class FocusPrototype implements Prototype {
     if (this.remaining <= 0) {
       this.running = false;
       this.remaining = 0;
-      Sfx.success();
+      Sfx.chime();
       this.ctx.toast('Time! Flick the card into Done, or twist for more.');
     }
   }
@@ -327,7 +347,7 @@ export class FocusPrototype implements Prototype {
           const angle = Math.atan2(dx, dz);
           this.twist = { hand, last: angle, accum: 0, start: this.store.data.focusMinutes };
           this.running = false;
-          Sfx.pinch();
+          Sfx.pinch(hand.pinchPoint);
         }
       }
       return;
@@ -376,7 +396,7 @@ export class FocusPrototype implements Prototype {
         this.ctx.camera.getWorldDirection(this.tmp2).negate();
         this.ctx.setMousePlane(view.mesh.getWorldPosition(this.tmp), this.tmp2);
       }
-      Sfx.pinch();
+      Sfx.pinch(hand.pinchPoint);
     }
     // Carry and drop.
     for (let i = this.holds.length - 1; i >= 0; i -= 1) {
@@ -490,7 +510,7 @@ export class FocusPrototype implements Prototype {
 
   private returnCard(hold: Hold): void {
     hold.view.card.zone = hold.from;
-    Sfx.blip(400);
+    Sfx.error(hold.hand.pinchPoint);
   }
 
   private completeCard(id: string): void {
@@ -500,7 +520,7 @@ export class FocusPrototype implements Prototype {
       this.running = false;
       this.remaining = 0;
     }
-    Sfx.success();
+    Sfx.success(this.worldOf(TRAY));
     this.burst.fire(this.tmp.copy(TRAY).setY(0.04));
     if (streak > before) this.ctx.toast(streak > 1 ? `${streak}-day streak! Your plant grew.` : 'First one today. Your plant grew.');
     this.syncViews();
