@@ -37,6 +37,18 @@ npm run build
   `runtimeUrls.network` address in the Quest browser. Accept the local
   certificate, then press Enter XR.
 
+## Live build
+
+**https://jvastola.github.io/MetaStart26/** (open it in the Quest browser and
+press Enter XR).
+
+`.github/workflows/pages.yml` typechecks, tests, builds and publishes on every
+push. One-time setup: in the repository, go to **Settings > Pages > Build and
+deployment**, set **Source** to **GitHub Actions**, then re-run the workflow.
+
+GitHub Pages serves static files only, so Conjure runs in offline-sketch mode
+there. AI generation needs the `api/gen3d.ts` proxy on Vercel.
+
 ## First use
 
 1. Put on the headset and open the link. Press **Enter XR**.
@@ -203,6 +215,6 @@ The 39 unit tests, typecheck and production build pass.
 
 - [ ] Pick the entry and cut the other prototypes from the submitted build (or keep the hub).
 - [ ] Device test on Quest 3 / 3S. Profile to 72 fps+ with the Meta VR CLI performance tools.
-- [ ] Deploy (Vercel recommended for the AI proxy; GitHub Pages works without it).
+- [x] Deploy to GitHub Pages (workflow in place; Vercel only needed for the AI proxy).
 - [ ] Record a real-footage video under 3 minutes following `docs/VIDEO_SCRIPT.md`.
 - [ ] Devpost form: Productivity track, New Experience division, description, how hands are used.
