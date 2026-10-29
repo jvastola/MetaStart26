@@ -192,6 +192,11 @@ export class IntroPrototype implements Prototype {
         if (p.pinchStarted && pointerDistance(p, this.deskRoot.localToWorld(this.tmp.copy(BUTTON).setY(0.02))) < 0.045) pressed = true;
         continue;
       }
+      // A pinch (or controller trigger) on the button also counts.
+      if (p.pinchStarted && p.pinchPoint.distanceTo(this.deskRoot.localToWorld(this.tmp.copy(BUTTON).setY(0.02))) < 0.06) {
+        pressed = true;
+        continue;
+      }
       const tip = this.deskRoot.worldToLocal(this.tmp.copy(p.indexTip));
       if (Math.hypot(tip.x - BUTTON.x, tip.z - BUTTON.z) > 0.04) continue;
       depth = Math.min(depth, tip.y);

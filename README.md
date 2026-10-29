@@ -53,8 +53,13 @@ there. AI generation needs the `api/gen3d.ts` proxy on Vercel.
 
 1. Put on the headset and open the link. Press **Enter XR**.
 2. The lab looks for your desk in your Space Setup and puts a soft desk mat on
-   it ("Found your table"). If it can't find one, hold your hand over the
-   desk and pinch.
+   it ("Found your table"). If it can't find one, hold your hand (or a
+   controller) over the desk and pinch (or pull the trigger). The setup panel
+   shows how many room surfaces the headset reported. If you do nothing, the
+   desk appears in front of you after a few seconds; move it later with
+   **Move desk** in the menu.
+   - If the browser's own enter prompt doesn't appear (Quest sometimes skips
+     it after a reload), use the **Enter mixed reality** button on the page.
 3. A **40-second tutorial** teaches the four moves by doing them. A ghost
    fingertip demonstrates each one:
    1. poke a glowing button;
@@ -82,6 +87,12 @@ interaction is **direct touch**, not rays:
 | Pinch a dial or rim and move around it | Twist it (timer, turntable) |
 | Turn your left palm toward your face | Wrist menu: Home, Move desk, How to, Sound |
 | Thumb microgestures (thumb tap, swipe on the index finger) | Shortcuts: start/pause, next card, undo, bigger/smaller, rotate |
+
+**Controllers work too**, though hands are the design target:
+- the controller acts as a fingertip 5 cm ahead of the grip, so you can poke
+  with it;
+- the trigger is the pinch;
+- X or A opens and closes the menu.
 
 There is no locomotion: the experience is designed to be used seated.
 

@@ -67,6 +67,8 @@ export class LabSystem extends createSystem({
   private initialized = new Set<string>();
 
   private setup: Setup = 'ready';
+  /** True while the user is re-placing the desk by hand (no auto-placement). */
+  private moving = false;
   private setupTime = 0;
   private ghost!: Group;
   private setupPanel!: CanvasPanel;
@@ -153,6 +155,7 @@ export class LabSystem extends createSystem({
         if (immersive === this.ctx.immersive) return;
         this.ctx.immersive = immersive;
         this.ctx.pointers = immersive ? this.hands.both : [this.mouse];
+        if (this.enterButton) this.enterButton.style.display = immersive ? 'none' : 'block';
         if (immersive) {
           Sfx.unlock();
           this.beginSetup();
@@ -168,6 +171,7 @@ export class LabSystem extends createSystem({
     const first = store.get<boolean>(INTRO_DONE_KEY, false) ? 'hub' : 'intro';
     this.go(requested && this.protos.some((p) => p.id === requested) ? requested : first);
     this.buildDomNav();
+    this.buildEnterButton();
     this.exposeDebugHooks();
   }
 
@@ -241,7 +245,8 @@ export class LabSystem extends createSystem({
         this.finishSetup(this.found.position, this.found.yaw, `Found your ${this.found.label}.`);
         return;
       }
-      if (this.setupTime > 1.5) {
+      // Quest can take a few seconds to report Space Setup planes.
+      if (this.setupTime > 3) {
         const saved = store.get<SavedPose | null>(DESK_KEY, null);
         if (saved) {
           this.applySaved(saved);
@@ -256,16 +261,40 @@ export class LabSystem extends createSystem({
       return;
     }
     if (this.setup === 'manual') {
+      // Surfaces can still arrive late; take a detected desk whenever it shows up.
+      this.camera.getWorldDirection(this.tmp2);
+      if (!this.moving && findDesk(planes, this.head, this.tmp2, this.found)) {
+        this.finishSetup(this.found.position, this.found.yaw, `Found your ${this.found.label}.`);
+        return;
+      }
       const hand = this.placementHand();
+      const count = [...(planes as Iterable<Entity>)].length;
+      const surfaces = `Room surfaces reported: ${count}${count === 0 ? ' (run Space Setup in Quest settings to enable auto-placement)' : ''}.`;
       this.setupPanel.mesh.visible = true;
       this.setupPanel.setText(
         'Set up',
         'Where is your desk?',
-        hand
-          ? 'Hold your hand just above your desk or table, then pinch.'
-          : 'Show your hands to the headset.',
+        [
+          hand?.isController
+            ? 'Hold the controller just above your desk, then pull the trigger.'
+            : hand
+              ? 'Hold your hand just above your desk or table, then pinch.'
+              : 'Show your hands (or pick up a controller).',
+          surfaces,
+        ],
       );
       this.ghost.visible = hand != null;
+      // Never leave someone with an empty room: place it in front of them.
+      if (!this.moving && this.setupTime > (hand ? 15 : 5)) {
+        this.camera.getWorldDirection(this.tmp2);
+        this.tmp2.y = 0;
+        this.tmp2.normalize();
+        this.tmp.copy(this.head).addScaledVector(this.tmp2, 0.45);
+        this.tmp.y = Math.max(0.55, this.head.y - 0.42);
+        const yaw = Math.atan2(this.head.x - this.tmp.x, this.head.z - this.tmp.z);
+        this.finishSetup(this.tmp, yaw, 'Placed in front of you. Palm up (or X/A), then Move desk to adjust.');
+        return;
+      }
       if (hand == null) {
         this.placeSetupPanelAtHead();
         return;
@@ -328,6 +357,7 @@ export class LabSystem extends createSystem({
       wall: [this.wall.position.x, this.wall.position.y, this.wall.position.z, this.wall.rotation.y],
     } satisfies SavedPose);
     this.setup = 'ready';
+    this.moving = false;
     this.ghost.visible = false;
     this.setupPanel.mesh.visible = false;
     this.showActive(true);
@@ -473,7 +503,7 @@ export class LabSystem extends createSystem({
     this.ghost.visible = false;
     chrome.add(this.ghost);
 
-    this.setupPanel = new CanvasPanel({ width: 0.3, height: 0.11, columns: 1 });
+    this.setupPanel = new CanvasPanel({ width: 0.34, height: 0.13, columns: 1 });
     this.setupPanel.mesh.visible = false;
     chrome.add(this.setupPanel.mesh);
 
@@ -495,6 +525,7 @@ export class LabSystem extends createSystem({
         this.showActive(false);
         this.setup = 'manual';
         this.setupTime = 0;
+        this.moving = true;
       }
     };
     this.wristPanel.mesh.visible = false;
@@ -598,6 +629,40 @@ export class LabSystem extends createSystem({
   // ------------------------------------------------------------ desktop nav
 
   private nav: HTMLDivElement | null = null;
+
+  private enterButton: HTMLButtonElement | null = null;
+
+  /**
+   * Our own "Enter mixed reality" button. IWSDK only uses the browser's
+   * offerSession prompt, which Quest does not always show again after a
+   * reload, so the page keeps a button that always works.
+   */
+  private buildEnterButton(): void {
+    if (!this.world.xrEnabled || !navigator.xr) return;
+    const b = document.createElement('button');
+    b.textContent = 'Enter mixed reality';
+    b.style.cssText =
+      'position:fixed;left:50%;bottom:64px;transform:translateX(-50%);z-index:11;font:700 22px system-ui,sans-serif;' +
+      'padding:18px 30px;border-radius:999px;border:0;background:#7fe0b5;color:#10241b;cursor:pointer;box-shadow:0 8px 30px rgba(0,0,0,.35);display:none';
+    b.addEventListener('click', () => {
+      Sfx.unlock();
+      try {
+        this.world.launchXR();
+      } catch (error) {
+        console.error('[Lab] Could not start XR', error);
+        b.textContent = 'Could not start XR - tap to retry';
+      }
+    });
+    document.body.appendChild(b);
+    this.enterButton = b;
+    this.cleanupFuncs.push(() => b.remove());
+    void navigator.xr
+      .isSessionSupported('immersive-ar')
+      .then((ok) => {
+        if (ok && !this.ctx.immersive) b.style.display = 'block';
+      })
+      .catch(() => {});
+  }
 
   private buildDomNav(): void {
     const nav = document.createElement('div');

@@ -13,7 +13,7 @@
  * driven in a desktop browser without a headset.
  */
 
-import { type Matrix4, Vector3 } from '@iwsdk/core';
+import { type Matrix4, Quaternion, Vector3 } from '@iwsdk/core';
 
 /** Thumb-to-index distance that starts a pinch. */
 const PINCH_ON = 0.018;
@@ -62,6 +62,10 @@ const MICRO_BUTTONS: [number, Microgesture][] = [
 export class HandState {
   readonly side: Side;
   readonly isMouse: boolean;
+  /** True when this side is a held controller rather than a tracked hand. */
+  isController = false;
+  /** Controllers have no palm: X/A toggles the menu instead. */
+  menuLatch = false;
   tracked = false;
   pinching = false;
   pinchStarted = false;
@@ -136,6 +140,37 @@ export class HandState {
     }
   }
 
+  /**
+   * Feed a controller as if it were a hand: the "fingertip" sits 5 cm ahead of
+   * the grip along the pointing ray, and the trigger is the pinch.
+   */
+  feedController(grip: Vector3, forward: Vector3, gamepad: Gamepad | null | undefined, dt: number): void {
+    this.isController = true;
+    this.tracked = true;
+    const tip = this.indexTip;
+    tip.copy(grip).addScaledVector(forward, 0.05);
+    for (const t of this.tips) if (t !== tip) t.copy(tip);
+    this.wrist.copy(grip);
+    this.palm.copy(grip);
+    this.palmNormal.set(0, 1, 0);
+    if (this.hasLast && dt > 0) {
+      const k = 1 - Math.exp(-dt / VELOCITY_TAU);
+      smoothVelocity(this.indexVelocity, tip, this.lastIndex, dt, k);
+      smoothVelocity(this.pinchVelocity, tip, this.lastPinch, dt, k);
+    }
+    this.lastIndex.copy(tip);
+    this.lastPinch.copy(tip);
+    this.hasLast = true;
+    this.pinchPoint.copy(tip);
+    const trigger = gamepad?.buttons[0]?.value ?? 0;
+    this.setPinch(this.pinching ? trigger > 0.3 : trigger > 0.6);
+    // X (left) / A (right) toggles the menu.
+    this.gesture = null;
+    const face = gamepad?.buttons[4]?.pressed ?? false;
+    if (face && !this.buttonsDown[4]) this.menuLatch = !this.menuLatch;
+    this.buttonsDown[4] = face;
+  }
+
   /** No tracking data this frame: release any pinch cleanly. */
   lose(): void {
     this.pinchEnded = this.pinching;
@@ -156,6 +191,7 @@ export class HandState {
 
   /** True when the palm faces the given point (e.g. the head). */
   palmFaces(point: Vector3, threshold = 0.6): boolean {
+    if (this.isController) return this.tracked && this.menuLatch;
     if (!this.tracked || this.isMouse) return false;
     const dx = point.x - this.palm.x;
     const dy = point.y - this.palm.y;
@@ -179,6 +215,7 @@ export class Hands {
   readAllJoints = false;
   private readonly seen = { left: false, right: false };
   private readonly meta = [new Vector3(), new Vector3(), new Vector3()];
+  private readonly quat = new Quaternion();
 
   /**
    * Read joints for this XR frame. `playerMatrix` converts the reference
@@ -187,16 +224,31 @@ export class Hands {
   update(frame: XRFrame | null, refSpace: XRReferenceSpace | null, playerMatrix: Matrix4, dt: number): void {
     this.seen.left = false;
     this.seen.right = false;
-    if (frame != null && refSpace != null && frame.getJointPose) {
+    if (frame != null && refSpace != null) {
       for (const source of frame.session.inputSources) {
-        const hand = source.hand;
         const side = source.handedness;
-        if (hand == null || (side !== 'left' && side !== 'right')) continue;
+        if (side !== 'left' && side !== 'right') continue;
         const state = this[side];
-        if (!this.readHand(frame, refSpace, hand, state, playerMatrix)) continue;
-        state.finishFrame(this.meta[0], this.meta[1], this.meta[2], dt);
-        state.readGestures(source.gamepad);
-        this.seen[side] = true;
+        const hand = source.hand;
+        if (hand != null && frame.getJointPose) {
+          if (!this.readHand(frame, refSpace, hand, state, playerMatrix)) continue;
+          state.isController = false;
+          state.finishFrame(this.meta[0], this.meta[1], this.meta[2], dt);
+          state.readGestures(source.gamepad);
+          this.seen[side] = true;
+        } else if (hand == null && source.gripSpace) {
+          // Controllers are welcome too: they act as a pinching fingertip.
+          const grip = frame.getPose(source.gripSpace, refSpace);
+          const ray = frame.getPose(source.targetRaySpace, refSpace);
+          if (grip == null || ray == null) continue;
+          const g = grip.transform.position;
+          const o = ray.transform.orientation;
+          this.meta[0].set(g.x, g.y, g.z).applyMatrix4(playerMatrix);
+          // The ray points down its local -Z.
+          this.meta[1].set(0, 0, -1).applyQuaternion(this.quat.set(o.x, o.y, o.z, o.w)).transformDirection(playerMatrix);
+          state.feedController(this.meta[0], this.meta[1], source.gamepad, dt);
+          this.seen[side] = true;
+        }
       }
     }
     for (const side of ['left', 'right'] as const) {

@@ -226,7 +226,7 @@ export class HandSkeleton {
   }
 
   update(hand: HandState, visible: boolean): void {
-    this.group.visible = visible && hand.tracked && !hand.isMouse;
+    this.group.visible = visible && hand.tracked && !hand.isMouse && !hand.isController;
     if (!this.group.visible) return;
     hand.joints.forEach((p, i) => {
       const r = i === 0 ? 0.012 : (i + 1) % 5 === 0 ? 0.006 : 0.0075;
