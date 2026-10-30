@@ -14,8 +14,8 @@ division.
 |---|---|---|---|
 | 1 | **Desk Focus** | Productivity | A daily planner on your real desk, all within reach: grab cards off a desk planner, twist a timer, drop them in Done, grow a streak plant. A glance display on the wall shows the timer and progress. |
 | 2 | **Conjure** | Productivity / creative (Agentic) | Say or type what you want and it appears on the pedestal; the previous one steps aside to a free shelf spot and nothing else moves. Icon buttons: idea, speak, type, another version, AI on/off, clear. Instant offline sketch, optionally upgraded by Meshy or Tripo. |
-| 3 | **Shot Board** | Productivity / creative | Storyboard a scene on your desk. Frame shots with both hands like a director, anywhere in the lab; they collect on the board. |
-| 4 | **Clay** | Productivity / creative | Sculpt with your bare fingertips on a turntable. Tools are round icon buttons in an arc on the desk (sculpt, smooth, inflate, mirror, auto spin, colour, undo, reset, print, clear prints, export); sliders for size (0.5x to 5x) and brush size. **Print copy** builds a solid copy you can pick up. |
+| 3 | **Shot Board** | Productivity / creative | Storyboard a scene on your desk. Frame shots with both hands like a director, anywhere in the lab; they collect on the storyboard as numbered, framed 3D cards on an arc, with play and remove-last buttons on a ledge below. |
+| 4 | **Clay** | Productivity / creative | Sculpt with your bare fingertips on a turntable. Tools are round icon buttons in an arc on the desk (sculpt, smooth, inflate, mirror, auto spin, colour, undo, reset, print, clear prints, export); sliders for size (0.5x to 5x) and brush size, or grab the turntable base and raise or lower your hand to resize. **Print copy** builds a solid copy you can pick up; the pin in front of a print keeps it in place, safe from Clear prints, and still there next session. |
 | 5 | **Sketch** | Productivity / creative | Pinch to draw in the air with either hand or both; grab a stroke to move it, both hands to scale. Loop around strokes to select several and move, scale, duplicate, paint or delete them together. Icon buttons for colour, brush size, erase, select, undo, clear. |
 | 6 | **Desk Links** | Gaming (reference) | Fingertip mini golf on your desk, kept for comparing hand mechanics. |
 | 7 | **Studio** | Productivity / creative | A small desk OS. A dock of icons opens tools as windows (Draw, Conjure, Clay, Storyboard), several at once. Each window's bar moves it and has **pin**, **focus** and **hide**: unpinned windows fold their controls away until you reach toward them, and focus gives one tool the whole desk. Select across tools: strokes, creations and prints together. |
@@ -107,8 +107,10 @@ top; their name appears only while a hand, the cursor or a ray is on them.
 holding: your hand draws a loop. A grab *on* something still picks it up
 straight away, so the same gesture means "take this" on a thing and "select"
 in the air. (The **Select** tool in the drawing tools lets a normal pinch draw
-the loop instead.) Whatever falls inside the loop *as you see it* is
-selected, near or far. Selected things get a ring; a small row of buttons
+the loop instead.) The loop is a glowing tube in the air with a
+dashed line showing where it will close, and things light up while you draw
+as soon as the loop surrounds them. Whatever falls inside the loop *as you see
+it* is selected, near or far. Selected things get a ring; a small row of buttons
 floats above them (duplicate, paint with the brush colour, delete, deselect).
 Grab any of them to move all of them, use two hands to scale them, drop them
 on the bin to delete them, or tap a grab on empty air to deselect.
@@ -127,6 +129,7 @@ on the bin to delete them, or tap a grab on empty air to deselect.
 | Pinch or grab the bar on the front edge of the desk mat | Move the whole workspace; turn your wrist to turn it. It stays there next time |
 | Pinch (or touch) the colour wheel and drag | Ring = hue, inner square = saturation and brightness; recent colours underneath. The **Colour** button shows or hides it (Sketch, Clay) |
 | Pinch the knob of a desk slider and slide | Change a value: Clay's sculpture size (0.5x to 5x) and brush size |
+| Grab Clay's turntable base and move your hand up or down | Resize the sculpture (20 cm covers the whole range) |
 | Poke keys on the desk keyboard | Type; **Mic** dictates. Opens from Desk Focus **New card** and Conjure **Type** |
 | Poke the house or **?** button on the desk's front-left corner | Home, or this app's how-to card (in every app) |
 | Turn your left palm toward your face | Hand menu: Home, How to, Sound on/off, Passthrough / Virtual room |
@@ -249,9 +252,9 @@ src/protos/studio.ts     Studio desk OS: dock, windows, gesture routing between 
 src/core/window.ts       desk window: tray, handle bar, pin / focus / hide, folding
 src/core/icon-button.ts  round icon buttons (poke, pinch, click, ray); icons.ts draws them
 src/core/rays.ts         far rays that show only on usable targets out of reach
-src/core/selection.ts    loop select, group move/scale, selection menu
+src/core/selection.ts    3D loop select with live preview, group move/scale, selection menu
 src/core/trash.ts        the desk bin
-src/core/storyboard.ts   storyboard wall and animatic player (Shot Board, Studio)
+src/core/storyboard.ts   storyboard: framed 3D shot cards, ledge buttons, animatic player
 src/core/grab.ts         hand-rotation hold used by every pickable object
 src/core/camera-frame.ts two-hand frame gesture and the shared shot album
 src/core/settings-ui.ts  page Settings dialog (AI keys)

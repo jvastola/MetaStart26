@@ -21,8 +21,12 @@ import {
   BufferGeometry,
   Color,
   Group,
+  CylinderGeometry,
+  InstancedMesh,
   Line,
-  LineBasicMaterial,
+  LineDashedMaterial,
+  MeshStandardMaterial,
+  SphereGeometry,
   Matrix4,
   Mesh,
   MeshBasicMaterial,
@@ -49,6 +53,8 @@ export interface Selectable {
 
 export interface SelectionSource {
   items(): Selectable[];
+  /** True if a grab here picks up something of this tool (so it is not an air grab). */
+  grabbable?(world: Vector3): boolean;
   remove(items: Selectable[]): void;
   duplicate?(items: Selectable[]): Selectable[];
   recolor?(items: Selectable[], hex: string): void;
@@ -86,7 +92,12 @@ export class Selection {
   /** Set by tests: how many things the last loop caught. */
   lastCaught = 0;
   private readonly sources: SelectionSource[] = [];
-  private lasso: { hand: HandState; via: 'pinch' | 'grab'; points: Vector3[]; line: Line } | null = null;
+  private lasso: { hand: HandState; via: 'pinch' | 'grab'; points: Vector3[] } | null = null;
+  /** The loop as a glowing tube: beads at each point, segments between. */
+  private readonly beads: InstancedMesh;
+  private readonly links: InstancedMesh;
+  /** Dashed line that shows where the loop will close. */
+  private readonly closer: Line;
   /** Grabs that began on empty air: a loop once held or moved, a deselect if just tapped. */
   private readonly air = new Map<HandState, { time: number; at: Vector3 }>();
   private hold: GroupHold | null = null;
@@ -100,7 +111,11 @@ export class Selection {
   private readonly eye = new Vector3();
   private readonly m = new Matrix4();
   private readonly q = new Quaternion();
-  private readonly lassoMat: LineBasicMaterial;
+  private readonly lassoMat: MeshStandardMaterial;
+  private readonly im = new Matrix4();
+  private readonly iq = new Quaternion();
+  private readonly is = new Vector3();
+  private readonly idir = new Vector3();
   private readonly haloMat: MeshBasicMaterial;
 
   constructor(
@@ -109,7 +124,14 @@ export class Selection {
   ) {
     this.group.name = 'Selection';
     this.group.userData.hideInShots = true;
-    this.lassoMat = new LineBasicMaterial({ color: accent, transparent: true, opacity: 0.9, depthTest: false });
+    this.lassoMat = new MeshStandardMaterial({ color: accent, emissive: accent, emissiveIntensity: 0.9, roughness: 0.3 });
+    this.beads = new InstancedMesh(new SphereGeometry(0.0042, 10, 8), this.lassoMat, MAX_LASSO_POINTS);
+    this.links = new InstancedMesh(new CylinderGeometry(0.0028, 0.0028, 1, 8, 1, true), this.lassoMat, MAX_LASSO_POINTS);
+    this.beads.count = this.links.count = 0;
+    this.beads.frustumCulled = this.links.frustumCulled = false;
+    this.closer = new Line(new BufferGeometry().setFromPoints([new Vector3(), new Vector3()]), new LineDashedMaterial({ color: accent, dashSize: 0.01, gapSize: 0.008, transparent: true, opacity: 0.8 }));
+    this.closer.frustumCulled = false;
+    this.beads.visible = this.links.visible = this.closer.visible = false;
     this.haloMat = new MeshBasicMaterial({ color: new Color(accent), transparent: true, opacity: 0.55, depthWrite: false });
     const menu: [string, string, string, () => void][] = [
       ['sel:duplicate', 'duplicate', 'Duplicate', () => this.duplicate()],
@@ -125,7 +147,7 @@ export class Selection {
       this.menu.add(b.group);
     });
     this.menu.visible = false;
-    this.group.add(this.menu);
+    this.group.add(this.menu, this.beads, this.links, this.closer);
     // Children are placed in world coordinates wherever the group is parented.
     this.group.matrixAutoUpdate = false;
   }
@@ -189,16 +211,63 @@ export class Selection {
   // ------------------------------------------------------------ lasso
 
   private beginLasso(hand: HandState, via: 'pinch' | 'grab', from: Vector3): void {
-    const line = new Line(new BufferGeometry(), this.lassoMat);
-    line.renderOrder = 40;
-    line.frustumCulled = false;
-    this.group.add(line);
-    this.lasso = { hand, via, points: [from.clone()], line };
+    this.lasso = { hand, via, points: [] };
+    this.beads.count = this.links.count = 0;
+    this.addLassoPoint(from);
+    this.beads.visible = this.links.visible = this.closer.visible = true;
     Sfx.blip(880, hand.isMouse ? undefined : from);
+  }
+
+  /** Grow the tube by one bead and the link to the previous one. */
+  private addLassoPoint(p: Vector3): void {
+    const pts = this.lasso!.points;
+    const i = pts.length;
+    pts.push(p.clone());
+    this.im.makeTranslation(p.x, p.y, p.z);
+    this.beads.setMatrixAt(i, this.im);
+    this.beads.count = i + 1;
+    this.beads.instanceMatrix.needsUpdate = true;
+    if (i > 0) {
+      const prev = pts[i - 1];
+      this.idir.subVectors(p, prev);
+      const len = this.idir.length();
+      this.iq.setFromUnitVectors(UP, this.idir.multiplyScalar(1 / Math.max(len, 1e-6)));
+      this.im.compose(this.tmp.addVectors(p, prev).multiplyScalar(0.5), this.iq, this.is.set(1, len, 1));
+      this.links.setMatrixAt(i - 1, this.im);
+      this.links.count = i;
+      this.links.instanceMatrix.needsUpdate = true;
+    }
+    // The dashed closing line from here back to the start.
+    const pos = this.closer.geometry.attributes.position;
+    pos.setXYZ(0, p.x, p.y, p.z);
+    pos.setXYZ(1, pts[0].x, pts[0].y, pts[0].z);
+    pos.needsUpdate = true;
+    this.closer.computeLineDistances();
+  }
+
+  /** What the loop encloses, as seen from the eye. */
+  private enclosed(points: Vector3[]): Selectable[] {
+    const cam = this.ctx.camera;
+    cam.updateMatrixWorld(true);
+    const project = (w: Vector3): Vector2 | null => {
+      const l = cam.worldToLocal(this.tmp.copy(w));
+      if (l.z > -0.01) return null;
+      return new Vector2(l.x / -l.z, l.y / -l.z);
+    };
+    const poly = points.map(project).filter((v): v is Vector2 => v != null);
+    const caught: Selectable[] = [];
+    if (poly.length < 3) return caught;
+    for (const item of this.sources.flatMap((s) => s.items())) {
+      item.bounds(this.tmp2);
+      const c = project(this.tmp2);
+      if (c && inside(c, poly)) caught.push(item);
+    }
+    return caught;
   }
 
   /** True if a world point is on or next to anything selectable. */
   private nearAnything(world: Vector3): boolean {
+    if (this.sources.some((s) => s.grabbable?.(world))) return true;
     for (const item of this.sources.flatMap((s) => s.items())) {
       const r = item.bounds(this.tmp);
       const d = item.distance ? item.distance(world) : this.tmp.distanceTo(world) - r;
@@ -241,36 +310,29 @@ export class Selection {
       }
       return;
     }
-    const { hand, via, points, line } = this.lasso;
+    const { hand, via, points } = this.lasso;
     const held = via === 'pinch' ? hand.pinching : hand.grabbing;
     if (held && hand.tracked) {
       const p = via === 'pinch' ? hand.pinchPoint : hand.grabPoint;
-      if (points.length < MAX_LASSO_POINTS && points[points.length - 1].distanceTo(p) > 0.004) {
-        points.push(p.clone());
-        line.geometry.dispose();
-        line.geometry = new BufferGeometry().setFromPoints([...points, points[0]]);
+      if (points.length < MAX_LASSO_POINTS && points[points.length - 1].distanceTo(p) > 0.005) {
+        this.addLassoPoint(p);
+        // Live preview: what the loop would catch if you let go now lights up.
+        if (points.length >= 6 && points.length % 2 === 0) {
+          const before = this.items.length;
+          this.setItems(this.enclosed(points));
+          if (this.items.length > before) Sfx.blip(1100, hand.isMouse ? undefined : p);
+        }
       }
       return;
     }
     // Released: select what the loop encloses, as seen from the eye.
-    this.group.remove(line);
-    line.geometry.dispose();
+    this.beads.visible = this.links.visible = this.closer.visible = false;
     this.lasso = null;
-    if (points.length < 6) return;
-    const cam = this.ctx.camera;
-    cam.updateMatrixWorld(true);
-    const project = (w: Vector3): Vector2 | null => {
-      const l = cam.worldToLocal(this.tmp.copy(w));
-      if (l.z > -0.01) return null;
-      return new Vector2(l.x / -l.z, l.y / -l.z);
-    };
-    const poly = points.map(project).filter((v): v is Vector2 => v != null);
-    const caught: Selectable[] = [];
-    for (const item of this.sources.flatMap((s) => s.items())) {
-      item.bounds(this.tmp2);
-      const c = project(this.tmp2);
-      if (c && inside(c, poly)) caught.push(item);
+    if (points.length < 6) {
+      this.setItems([]);
+      return;
     }
+    const caught = this.enclosed(points);
     this.lastCaught = caught.length;
     this.setItems(caught);
     if (caught.length) Sfx.success(hand.isMouse ? undefined : hand.pinchPoint);
@@ -466,7 +528,7 @@ export class Selection {
       center.add(this.tmp);
       top = Math.max(top, this.tmp.y + r);
     }
-    this.menu.visible = this.active && !this.hold;
+    this.menu.visible = this.active && !this.hold && !this.lasso;
     if (!this.menu.visible) return;
     center.multiplyScalar(1 / this.halos.size);
     this.menu.position.set(center.x, top + 0.05, center.z);

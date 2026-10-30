@@ -11,7 +11,12 @@
  *
  * Print makes a solid copy of the sculpture that "prints" up from a pad
  * beside the turntable. Grab a print with thumb + middle finger to pick it
- * up; let go low over the desk and it settles onto the desk.
+ * up; let go low over the desk and it settles onto the desk. The small pin
+ * in front of a print keeps it where it is: pinned prints cannot be knocked
+ * about, survive Clear prints, and are still there next session.
+ *
+ * Grab the turntable base (thumb + middle) and raise or lower your hand to
+ * scale the sculpture; the size slider follows.
  */
 
 import {
@@ -82,6 +87,36 @@ interface Print {
   /** Clip plane in world space that rises as the print builds. */
   clip: Plane;
   settleTo: number | null;
+  pinned: boolean;
+  pinButton: IconButton;
+}
+
+/** A pinned print as saved: vertex positions (base64 float32), colour, transform. */
+interface SavedPrint {
+  v: string;
+  c: string;
+  /** Mesh scale, rotation and lift inside its holder. */
+  m: [number, number, number];
+  /** Holder position xyz, quaternion xyzw, scale. */
+  t: number[];
+  h: number;
+}
+
+const PINS_KEY = 'clay-pinned-v1';
+const MAX_PINNED = 4;
+
+function toBase64(a: Float32Array): string {
+  const bytes = new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+  let out = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) out += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(out);
+}
+
+function fromBase64(text: string): Float32Array {
+  const bin = atob(text);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  return new Float32Array(bytes.buffer);
 }
 
 /** Lets Studio embed Clay as a compact window with its own saved sculpt. */
@@ -125,7 +160,7 @@ export class ClayPrototype implements Prototype {
   readonly howTo = [
     'Press fingertips in to dent; pinch the surface and pull clay out.',
     'Round buttons pick tools; hover one to see its name.',
-    'Sliders: size up to 5x, and brush size. Pinch the gold rim to spin.',
+    'Grab the base (thumb + middle) and raise your hand to make it bigger.',
     'Print a copy, then grab it with thumb + middle finger.',
   ];
   readonly trash = true;
@@ -162,7 +197,9 @@ export class ClayPrototype implements Prototype {
   private readonly printSelectables = new Map<Print, Selectable>();
   /** Lets a Selection find, move, copy, paint and delete prints. */
   readonly selectionSource: SelectionSource = {
-    items: () => this.prints.filter((p) => p.progress >= 1 && !this.printHolds.some((h) => h.print === p)).map((p) => this.selectableFor(p)),
+    items: () => this.prints.filter((p) => p.progress >= 1 && !p.pinned && !this.printHolds.some((h) => h.print === p)).map((p) => this.selectableFor(p)),
+    // The turntable base and prints take a grab themselves: not an air grab.
+    grabbable: (w) => this.onBase(w) || this.prints.some((p) => p.holder.getWorldPosition(this.tmp2).distanceTo(w) < Math.max(0.05, p.height * 0.7)),
     remove: (items) => {
       for (const sel of items) {
         const p = this.printOf(sel);
@@ -185,7 +222,11 @@ export class ClayPrototype implements Prototype {
         holder.quaternion.copy(p.holder.quaternion);
         holder.scale.copy(p.holder.scale);
         (p.holder.parent ?? this.deskRoot).add(holder);
-        const copy: Print = { holder, mesh, material, height: p.height, progress: 1, clip: p.clip.clone(), settleTo: null };
+        const pinButton = new IconButton({ id: `clay:pin:${(this.printed += 1)}`, icon: 'pin', label: 'Pin it here', accent: this.accent, radius: 0.01 });
+        pinButton.group.position.copy(p.pinButton.group.position);
+        holder.add(pinButton.group);
+        const copy: Print = { holder, mesh, material, height: p.height, progress: 1, clip: p.clip.clone(), settleTo: null, pinned: false, pinButton };
+        pinButton.onPress = () => this.togglePin(copy);
         this.prints.push(copy);
         out.push(this.selectableFor(copy));
       }
@@ -223,12 +264,12 @@ export class ClayPrototype implements Prototype {
   private readonly tmp2 = new Vector3();
   private readonly raycaster = new Raycaster();
   private readonly euler = new Euler();
-  private readonly keys: { sculpt: string; color: string; scale: string; brush: string };
+  private readonly keys: { sculpt: string; color: string; scale: string; brush: string; pins: string };
   private readonly printPadAt: Vector3;
 
   constructor(private readonly options: ClayOptions = {}) {
     const prefix = options.keyPrefix ?? '';
-    this.keys = { sculpt: prefix + SAVE_KEY, color: prefix + COLOR_KEY, scale: prefix + SCALE_KEY, brush: prefix + BRUSH_KEY };
+    this.keys = { sculpt: prefix + SAVE_KEY, color: prefix + COLOR_KEY, scale: prefix + SCALE_KEY, brush: prefix + BRUSH_KEY, pins: prefix + PINS_KEY };
     this.layoutMode = options.layout ?? 'full';
     this.printPadAt = new Vector3();
   }
@@ -301,6 +342,7 @@ export class ClayPrototype implements Prototype {
     this.printPad.userData.hideInShots = true;
     this.deskRoot.add(this.printPad);
     this.setLayout(this.layoutMode);
+    this.loadPins();
     // Prints build up behind a clipping plane.
     ctx.renderer.localClippingEnabled = true;
   }
@@ -336,6 +378,53 @@ export class ClayPrototype implements Prototype {
   }
 
   private wheelWanted = false;
+  /** Grab on the turntable base: raise or lower the hand to scale the sculpture. */
+  private baseGrab: { hand: HandState; y0: number; v0: number; step: number } | null = null;
+
+  /** True if a world point is on the turntable base (where a grab scales). */
+  private onBase(world: Vector3): boolean {
+    const l = this.deskRoot.worldToLocal(this.tmp2.copy(world));
+    return Math.hypot(l.x, l.z) < TABLE_R + 0.025 && l.y < 0.045 && l.y > -0.02;
+  }
+
+  private updateBaseGrab(): void {
+    if (!this.baseGrab) {
+      for (const hand of this.ctx.pointers) {
+        if (!hand.tracked || !hand.grabStarted || this.owns(hand) || !this.onBase(hand.holdPoint)) continue;
+        const l = this.deskRoot.worldToLocal(this.tmp.copy(hand.holdPoint));
+        this.baseGrab = { hand, y0: l.y, v0: this.sizeSlider.value, step: Math.round(this.sizeSlider.value * 20) };
+        if (hand.isMouse) {
+          // Slide on a plane facing the camera, so moving the mouse up raises the hand.
+          this.ctx.camera.getWorldDirection(this.tmp2).negate();
+          this.ctx.setMousePlane(hand.holdPoint, this.tmp2);
+        }
+        hand.clearEdges();
+        Sfx.pinch(hand.isMouse ? undefined : hand.holdPoint);
+        return;
+      }
+      return;
+    }
+    const g = this.baseGrab;
+    if (!g.hand.grabbing || !g.hand.tracked) {
+      this.baseGrab = null;
+      if (g.hand.isMouse) {
+        this.ctx.desk.getWorldPosition(this.tmp);
+        this.ctx.setMousePlane(this.tmp, this.tmp2.set(0, 1, 0));
+      }
+      Sfx.place();
+      return;
+    }
+    // 20 cm of height covers the whole range (0.5x to 5x).
+    const l = this.deskRoot.worldToLocal(this.tmp.copy(g.hand.holdPoint));
+    const v = Math.min(1, Math.max(0, g.v0 + (l.y - g.y0) / 0.2));
+    this.sizeSlider.set(v);
+    this.setScale(sliderToScale(v));
+    const step = Math.round(v * 20);
+    if (step !== g.step) {
+      g.step = step;
+      Sfx.blip(400 + step * 30);
+    }
+  }
 
   /**
    * 'full': buttons in a wide arc in front, sliders on the right, prints on
@@ -354,7 +443,7 @@ export class ClayPrototype implements Prototype {
     if (full) {
       this.sizeSlider.group.position.set(0.3, 0.006, 0.02);
       this.brushSlider.group.position.set(0.3, 0.006, 0.1);
-      this.printPadAt.set(-0.29, 0, 0.12);
+      this.printPadAt.set(-0.29, 0, 0.0);
       this.wheel.mesh.position.set(-0.3, 0.14, -0.04);
       this.wheel.mesh.rotation.set(-0.2, 0.5, 0, 'YXZ');
     } else {
@@ -374,11 +463,11 @@ export class ClayPrototype implements Prototype {
 
   /** True if this hand is pulling clay, spinning the turntable or carrying a print. */
   owns(hand: HandState): boolean {
-    return this.pulls.some((p) => p.hand === hand) || this.spin?.hand === hand || this.printHolds.some((p) => p.hand === hand);
+    return this.pulls.some((p) => p.hand === hand) || this.spin?.hand === hand || this.printHolds.some((p) => p.hand === hand) || this.baseGrab?.hand === hand;
   }
 
   holding(): boolean {
-    return this.pulls.length > 0 || this.printHolds.length > 0 || this.spin != null || this.touching || this.wheel.active || this.sizeSlider.active || this.brushSlider.active;
+    return this.pulls.length > 0 || this.printHolds.length > 0 || this.spin != null || this.baseGrab != null || this.touching || this.wheel.active || this.sizeSlider.active || this.brushSlider.active;
   }
 
   update(dt: number): void {
@@ -391,6 +480,7 @@ export class ClayPrototype implements Prototype {
       return;
     }
     this.updatePrints(dt);
+    this.updateBaseGrab();
     if (this.options.gestures !== false) this.updateGestures();
     this.updateSpin();
     if (this.ctx.immersive) this.updateHands();
@@ -616,39 +706,102 @@ export class ClayPrototype implements Prototype {
   // ------------------------------------------------------------ prints
 
   /** Make a solid copy of the sculpture on the print pad. */
-  private print(): void {
+  /**
+   * A print's holder, mesh and pin button. `lift` rests the lowest point on
+   * the holder origin; pass null to compute it from the vertices.
+   */
+  private buildPrint(positions: Float32Array, color: string, scale: number, rotY: number, lift: number | null, building: boolean): Print {
     const geometry = new BufferGeometry();
-    geometry.setAttribute('position', new BufferAttribute(Float32Array.from(this.positions), 3));
+    geometry.setAttribute('position', new BufferAttribute(positions, 3));
     geometry.setIndex(this.geometry.index);
     geometry.computeVertexNormals();
     geometry.computeBoundingBox();
     const box = geometry.boundingBox!;
-    const scale = this.clay.scale.x;
     const clip = new Plane(new Vector3(0, -1, 0), 0);
-    const material = new MeshStandardMaterial({ color: this.material.color.clone(), roughness: 0.6, metalness: 0.05, clippingPlanes: [clip] });
+    const material = new MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.05, clippingPlanes: building ? [clip] : null });
     const mesh = new Mesh(geometry, material);
     mesh.name = 'ClayPrint';
     mesh.scale.setScalar(scale);
-    // Rest the copy's lowest point on the holder origin, facing as the clay does.
-    mesh.position.y = -box.min.y * scale;
-    mesh.rotation.y = this.turntable.rotation.y;
+    mesh.position.y = lift ?? -box.min.y * scale;
+    mesh.rotation.y = rotY;
     mesh.frustumCulled = false;
     const holder = new Group();
     holder.add(mesh);
+    // A small pin in front of the print.
+    const reach = Math.max(Math.abs(box.min.x), Math.abs(box.max.x), Math.abs(box.min.z), Math.abs(box.max.z)) * scale;
+    const pinButton = new IconButton({ id: `clay:pin:${(this.printed += 1)}`, icon: 'pin', label: 'Pin it here', accent: this.accent, radius: 0.01 });
+    pinButton.group.position.set(0, 0.001, reach + 0.018);
+    holder.add(pinButton.group);
+    const print: Print = { holder, mesh, material, height: (box.max.y - box.min.y) * scale, progress: building ? 0 : 1, clip, settleTo: null, pinned: false, pinButton };
+    pinButton.onPress = () => this.togglePin(print);
+    return print;
+  }
+
+  private togglePin(print: Print): void {
+    if (!print.pinned && this.prints.filter((p) => p.pinned).length >= MAX_PINNED) {
+      this.ctx.toast(`Up to ${MAX_PINNED} prints can be pinned.`);
+      return;
+    }
+    print.pinned = !print.pinned;
+    print.pinButton.active = print.pinned;
+    print.pinButton.label = print.pinned ? 'Pinned: stays here (press to unpin)' : 'Pin it here';
+    this.printHolds = this.printHolds.filter((h) => h.print !== print);
+    this.savePins();
+  }
+
+  private savePins(): void {
+    const out: SavedPrint[] = this.prints
+      .filter((p) => p.pinned)
+      .map((p) => {
+        const h = p.holder;
+        return {
+          v: toBase64(p.mesh.geometry.attributes.position.array as Float32Array),
+          c: `#${p.material.color.getHexString()}`,
+          m: [p.mesh.scale.x, p.mesh.rotation.y, p.mesh.position.y],
+          t: [...h.position.toArray(), ...h.quaternion.toArray(), h.scale.x],
+          h: p.height,
+        };
+      });
+    store.set(this.keys.pins, out);
+  }
+
+  private loadPins(): void {
+    for (const saved of store.get<SavedPrint[]>(this.keys.pins, [])) {
+      try {
+        const print = this.buildPrint(fromBase64(saved.v), saved.c, saved.m[0], saved.m[1], saved.m[2], false);
+        const [x, y, z, qx, qy, qz, qw, sc] = saved.t;
+        (this.options.printsParent ?? this.deskRoot).add(print.holder);
+        print.holder.position.set(x, y, z);
+        print.holder.quaternion.set(qx, qy, qz, qw);
+        print.holder.scale.setScalar(sc ?? 1);
+        print.pinned = true;
+        print.pinButton.active = true;
+        print.pinButton.label = 'Pinned: stays here (press to unpin)';
+        this.prints.push(print);
+      } catch {
+        // A damaged save: skip it.
+      }
+    }
+  }
+
+  private print(): void {
+    const scale = this.clay.scale.x;
+    const p = this.buildPrint(Float32Array.from(this.positions), `#${this.material.color.getHexString()}`, scale, this.turntable.rotation.y, null, true);
+    const { holder } = p;
     // Side by side on the pad: newest in the middle, older ones nudge back.
     holder.position.copy(this.printPadAt).setY(0.004);
     // Older prints still on the pad nudge back to make room.
     this.deskRoot.updateMatrixWorld(true);
     const padWorld = this.deskRoot.localToWorld(this.printPadAt.clone());
-    for (const p of this.prints) {
-      if (p.holder.getWorldPosition(this.tmp).distanceTo(padWorld) < 0.03) p.holder.translateZ(-0.09 * Math.max(0.6, scale));
+    for (const q of this.prints) {
+      if (!q.pinned && q.holder.getWorldPosition(this.tmp).distanceTo(padWorld) < 0.03) q.holder.translateZ(-0.09 * Math.max(0.6, scale));
     }
     this.deskRoot.add(holder);
     // Hand prints to the host's space so moving this tool leaves them where they are.
     this.options.printsParent?.attach(holder);
-    this.prints.push({ holder, mesh, material, height: (box.max.y - box.min.y) * scale, progress: 0, clip, settleTo: null });
-    while (this.prints.length > MAX_PRINTS) this.removePrint(this.prints[0]);
-    this.printed += 1;
+    this.prints.push(p);
+    // Too many: the oldest unpinned print goes.
+    while (this.prints.filter((q) => !q.pinned).length > MAX_PRINTS) this.removePrint(this.prints.find((q) => !q.pinned)!);
     Sfx.whoosh(padWorld);
     this.ctx.toast('Printing a copy. Grab it with thumb + middle finger.');
   }
@@ -662,8 +815,9 @@ export class ClayPrototype implements Prototype {
     print.material.dispose();
   }
 
+  /** Clear the unpinned prints; pinned ones stay. */
   private clearPrints(): void {
-    for (const p of [...this.prints]) this.removePrint(p);
+    for (const p of this.prints.filter((q) => !q.pinned)) this.removePrint(p);
     Sfx.whoosh();
   }
 
@@ -743,7 +897,7 @@ export class ClayPrototype implements Prototype {
     let best: Print | null = null;
     let bestDist = Infinity;
     for (const p of this.prints) {
-      if (p.progress < 1) continue;
+      if (p.progress < 1 || p.pinned) continue;
       p.holder.updateMatrixWorld(true);
       // Aim at the middle of the print.
       const centre = p.holder.localToWorld(this.tmp.set(0, p.height / 2, 0));
@@ -804,7 +958,7 @@ export class ClayPrototype implements Prototype {
       maxR = Math.max(maxR, r);
       minR = Math.min(minR, r);
     }
-    return { brush: +this.brush.toFixed(2), autoSpin: this.autoSpin, layout: this.layoutMode, scale: +this.clay.scale.x.toFixed(2), wheelVisible: this.wheel.mesh.visible, tool: this.tool, mirror: this.mirror, maxR: +maxR.toFixed(4), minR: +minR.toFixed(4), undo: this.undo.length, spin: +this.turntable.rotation.y.toFixed(3), prints: this.prints.map((p) => ({ progress: +p.progress.toFixed(2), pos: p.holder.position.toArray().map((v) => +v.toFixed(3)), height: +p.height.toFixed(3) })), printing: this.printHolds.length, printed: this.printed };
+    return { pinned: this.prints.filter((p) => p.pinned).length, baseGrab: this.baseGrab != null, brush: +this.brush.toFixed(2), autoSpin: this.autoSpin, layout: this.layoutMode, scale: +this.clay.scale.x.toFixed(2), wheelVisible: this.wheel.mesh.visible, tool: this.tool, mirror: this.mirror, maxR: +maxR.toFixed(4), minR: +minR.toFixed(4), undo: this.undo.length, spin: +this.turntable.rotation.y.toFixed(3), prints: this.prints.map((p) => ({ progress: +p.progress.toFixed(2), pos: p.holder.position.toArray().map((v) => +v.toFixed(3)), height: +p.height.toFixed(3) })), printing: this.printHolds.length, printed: this.printed };
   }
 
   debugActions = {
@@ -820,6 +974,12 @@ export class ClayPrototype implements Prototype {
       return { x: p.x, y: p.y, z: p.z };
     },
     reset: () => this.onButton('reset'),
+    pinPrint: (i: number) => this.prints[i] && this.togglePin(this.prints[i]),
+    baseWorld: () => {
+      this.deskRoot.updateMatrixWorld(true);
+      const p = this.deskRoot.localToWorld(new Vector3(TABLE_R * 0.7, 0.012, 0.03));
+      return { x: p.x, y: p.y, z: p.z };
+    },
     /** World centre of a print, for aiming a test grab. */
     printWorld: (i: number) => {
       const p = this.prints[i];

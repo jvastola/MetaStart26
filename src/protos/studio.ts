@@ -148,7 +148,7 @@ export class StudioPrototype implements Prototype {
       id: 'board',
       title: 'Storyboard',
       accent: ACCENTS.shotboard,
-      handle: { position: [0, -0.205, 0.02], length: 0.3 },
+      handle: { position: [0, -0.215, 0.07], length: 0.3 },
       reach: { center: [0, 0, 0], radius: 0.35 },
     });
     this.board = new StoryboardWall(ctx, board.content, ACCENTS.shotboard);
