@@ -32,6 +32,7 @@ import { openSettings } from './core/settings-ui.js';
 import { VirtualKeyboard } from './core/keyboard.js';
 import { type LabContext, type Prototype, store } from './core/context.js';
 import { HeldPose } from './core/grab.js';
+import { TRASH_POS, TrashBin } from './core/trash.js';
 import { grabDistance, HandState, Hands, pointerDistance } from './core/hands.js';
 import { CanvasPanel } from './core/panel.js';
 import { Sfx } from './core/sfx.js';
@@ -72,6 +73,7 @@ export class LabSystem extends createSystem({
   private deskBar!: Mesh;
   private keyboard = new VirtualKeyboard();
   private deskGrab: { hand: HandState; pose: HeldPose } | null = null;
+  private trashBin!: TrashBin;
   private realWall = false;
   private readonly barScratch = new Vector3();
   private album = new Album();
@@ -132,6 +134,9 @@ export class LabSystem extends createSystem({
     this.world.createTransformEntity(this.desk, { parent: roomEntity });
     this.world.createTransformEntity(this.wall, { parent: roomEntity });
 
+    this.trashBin = new TrashBin();
+    this.desk.add(this.trashBin.group);
+
     const system = this;
     this.ctx = {
       world: this.world,
@@ -155,6 +160,7 @@ export class LabSystem extends createSystem({
       toast: (text: string) => this.toast(text),
       goHome: () => this.go('hub'),
       album: this.album,
+      trash: this.trashBin,
       capture: (eye: Vector3, target: Vector3, fov: number) => this.shoot(eye, target, fov),
       openKeyboard: (request) => this.keyboard.open(request),
     };
@@ -230,6 +236,7 @@ export class LabSystem extends createSystem({
     this.ctx.setMousePlane(this.tmp, this.tmp2.set(0, 1, 0));
     next.deskRoot.visible = this.setup === 'ready';
     next.wallRoot.visible = this.setup === 'ready';
+    this.trashBin.group.visible = this.setup === 'ready' && next.trash === true;
     this.mat.setAccent(next.accent);
     for (const c of this.cursors) c.setAccent(next.accent);
     next.enter();
@@ -268,6 +275,7 @@ export class LabSystem extends createSystem({
     if (!this.active) return;
     this.active.deskRoot.visible = show;
     this.active.wallRoot.visible = show;
+    this.trashBin.group.visible = show && this.active.trash === true;
   }
 
   private updateSetup(dt: number): void {
@@ -531,6 +539,7 @@ export class LabSystem extends createSystem({
     this.ctx.frameArmed = this.frame.isArmed;
     if (caption) this.afterShot(caption);
     this.active?.update(dt);
+    this.trashBin.update(dt);
   }
 
   /** Capture from code (Snap view, tests) with the same feedback as the gesture. */
@@ -943,6 +952,12 @@ export class LabSystem extends createSystem({
         const v = new Vector3(x, y, z).project(this.camera);
         const rect = this.renderer.domElement.getBoundingClientRect();
         return { x: rect.left + ((v.x + 1) / 2) * rect.width, y: rect.top + ((1 - v.y) / 2) * rect.height };
+      },
+      /** Trash bin: world position of its mouth, items thrown away, shown. */
+      trash: () => {
+        this.desk.updateMatrixWorld(true);
+        const p = this.desk.localToWorld(TRASH_POS.clone().setY(0.08));
+        return { x: p.x, y: p.y, z: p.z, count: this.trashBin.count, visible: this.trashBin.group.visible };
       },
       hands: () =>
         this.hands.both.map((h) => ({ side: h.side, tracked: h.tracked, pinching: h.pinching, grabbing: h.grabbing, gap: h.indexTip.distanceTo(h.thumbTip), midGap: h.tips[2].distanceTo(h.thumbTip) })),

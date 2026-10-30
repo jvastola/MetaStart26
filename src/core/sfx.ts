@@ -305,6 +305,17 @@ export const Sfx = {
     log('whoosh');
     noise({ band: 280, to: 3200, q: 1.6, decay: 0.45, gain: 0.22, attack: 0.15, reverb: 0.4, at });
   },
+  /** Thrown away: a papery crumple falling into the bin. */
+  trash(at?: Where): void {
+    log('trash');
+    noise({ band: 2600, to: 700, q: 1.2, decay: 0.18, gain: 0.25, at, reverb: 0.1 });
+    tone({ freq: 240, to: 120, decay: 0.14, gain: 0.18, start: 0.08, at, reverb: 0.15 });
+  },
+  /** Eraser rubbing a stroke away. */
+  erase(at?: Where): void {
+    log('erase');
+    noise({ band: 1500, to: 3500, q: 1.4, decay: 0.12, gain: 0.16, at, reverb: 0.05 });
+  },
   /** Small neutral feedback, pitch carries meaning (up = more, down = less). */
   blip(freq = 700, at?: Where): void {
     log('blip', freq);

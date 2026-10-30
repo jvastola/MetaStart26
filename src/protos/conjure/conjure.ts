@@ -73,7 +73,14 @@ const PROMPT_IDEAS = [
   'pine tree',
   'ringed planet',
 ];
+const SHELF_COMPACT = [new Vector3(-0.15, 0, 0.07), new Vector3(0.15, 0, 0.07), new Vector3(-0.165, 0, -0.06), new Vector3(0.165, 0, -0.06)];
 const MAX_ITEMS = 1 + SHELF.length;
+
+/** Lets Studio embed Conjure as a compact window. */
+export interface ConjureOptions {
+  /** 'compact' pulls the shelf in and the panel behind the pedestal. */
+  layout?: 'full' | 'compact';
+}
 
 export class ConjurePrototype implements Prototype {
   readonly id = 'conjure';
@@ -84,7 +91,9 @@ export class ConjurePrototype implements Prototype {
     'Press Speak and say what you want, or pinch an idea.',
     'Follow up: "make it blue", "bigger", "another one".',
     'Grab a creation (thumb + middle finger) to move it; use both hands to scale.',
+    'Drop a creation in the bin on the desk corner to delete it.',
   ];
+  readonly trash = true;
   readonly deskRoot = new Group();
   readonly wallRoot = new Group();
 
@@ -105,6 +114,11 @@ export class ConjurePrototype implements Prototype {
   private ideaOffset = 0;
   private readonly tmp = new Vector3();
   private readonly tmp2 = new Vector3();
+  private readonly shelf: Vector3[];
+
+  constructor(private readonly options: ConjureOptions = {}) {
+    this.shelf = options.layout === 'compact' ? SHELF_COMPACT : SHELF;
+  }
 
   init(ctx: LabContext): void {
     this.ctx = ctx;
@@ -120,7 +134,7 @@ export class ConjurePrototype implements Prototype {
 
     this.panel = new CanvasPanel({ width: 0.38, height: 0.16, columns: 4, buttonHeight: 0.032, accent: this.accent });
     this.panel.mesh.name = 'ConjurePanel';
-    this.panel.mesh.position.set(0, 0.09, -0.19);
+    this.panel.mesh.position.set(0, this.options.layout === 'compact' ? 0.11 : 0.09, this.options.layout === 'compact' ? -0.17 : -0.19);
     this.panel.mesh.rotation.x = -0.3;
     this.panel.onPress = (id) => this.onButton(id);
     this.deskRoot.add(this.panel.mesh);
@@ -281,7 +295,7 @@ export class ConjurePrototype implements Prototype {
     this.items.forEach((item, i) => {
       if (item.free) return;
       if (i === 0) item.holder.userData.target = PEDESTAL;
-      else item.holder.userData.target = SHELF[Math.min(slot++, SHELF.length - 1)];
+      else item.holder.userData.target = this.shelf[Math.min(slot++, this.shelf.length - 1)];
     });
   }
 
@@ -371,11 +385,17 @@ export class ConjurePrototype implements Prototype {
       }
       if (this.twoHand?.item === hold.item) continue;
       hold.pose.apply(hold.hand, hold.item.holder);
+      this.ctx.trash.near(hold.hand.holdPoint);
     }
   }
 
   private release(hold: Hold): void {
     if (this.holds.some((h) => h.item === hold.item)) return;
+    if (this.ctx.trash.take(hold.hand.holdPoint)) {
+      this.remove(hold.item);
+      this.status = `Threw away the ${hold.item.prompt}.`;
+      return;
+    }
     const p = hold.item.holder.position;
     if (Math.hypot(p.x - PEDESTAL.x, p.z - PEDESTAL.z) < 0.08 && p.y < 0.1) {
       // Back onto the pedestal: make it the current item.

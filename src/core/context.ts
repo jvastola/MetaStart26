@@ -12,6 +12,7 @@ import type { Group, PerspectiveCamera, Scene, Vector3, WebGLRenderer, World } f
 import type { Album } from './camera-frame.js';
 import type { HandState, Hands } from './hands.js';
 import type { KeyboardRequest } from './keyboard.js';
+import type { TrashBin } from './trash.js';
 
 export interface LabContext {
   readonly world: World;
@@ -43,6 +44,8 @@ export interface LabContext {
   readonly album: Album;
   /** Open the desk keyboard (with mic) for text entry. */
   openKeyboard(request: KeyboardRequest): void;
+  /** The desk's trash bin (shown for prototypes with `trash: true`). */
+  readonly trash: TrashBin;
   /** Render a shot from `eye` toward `target` into the album; returns its caption. */
   capture(eye: Vector3, target: Vector3, fov: number): string;
 }
@@ -53,6 +56,8 @@ export interface Prototype {
   readonly tagline: string;
   /** Accent colour: desk mat rim, pinch cursor, hub stripe. */
   readonly accent: string;
+  /** Show the desk's trash bin while this prototype is active. */
+  readonly trash?: boolean;
   /** Short how-to lines shown the first time the prototype opens. */
   readonly howTo?: string[];
   readonly deskRoot: Group;

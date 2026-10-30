@@ -82,6 +82,18 @@ interface Print {
   settleTo: number | null;
 }
 
+/** Lets Studio embed Clay as a compact window with its own saved sculpt. */
+export interface ClayOptions {
+  /** Prefix for saved keys, so an embedded copy keeps its own sculpt. */
+  keyPrefix?: string;
+  /** 'compact' puts the panel behind the turntable, so the whole tool is narrow. */
+  layout?: 'full' | 'compact';
+  /** Thumb microgestures (spin, tool, undo). Off when the host owns them. */
+  gestures?: boolean;
+  /** Where finished prints live, so they stay put when the tool moves. */
+  printsParent?: Group;
+}
+
 /** Slider 0..1 to sculpture scale 0.5x..2x (1x in the middle). */
 const sliderToScale = (v: number): number => 0.5 * 4 ** v;
 
@@ -96,6 +108,7 @@ export class ClayPrototype implements Prototype {
     'Pinch the gold rim and drag to spin the turntable.',
     'Print copy, then grab the print with thumb + middle finger.',
   ];
+  readonly trash = true;
   readonly deskRoot = new Group();
   readonly wallRoot = new Group();
 
@@ -128,6 +141,14 @@ export class ClayPrototype implements Prototype {
   private readonly tmp2 = new Vector3();
   private readonly raycaster = new Raycaster();
   private readonly euler = new Euler();
+  private readonly keys: { sculpt: string; color: string; scale: string };
+  private readonly printPadAt: Vector3;
+
+  constructor(private readonly options: ClayOptions = {}) {
+    const prefix = options.keyPrefix ?? '';
+    this.keys = { sculpt: prefix + SAVE_KEY, color: prefix + COLOR_KEY, scale: prefix + SCALE_KEY };
+    this.printPadAt = options.layout === 'compact' ? new Vector3(-0.155, 0, 0.09) : PRINT_PAD.clone();
+  }
   private readonly ndc = new Vector2();
 
   init(ctx: LabContext): void {
@@ -145,7 +166,7 @@ export class ClayPrototype implements Prototype {
 
     const sphere = makeIcosphere(RADIUS, DETAIL);
     this.rest = Float32Array.from(sphere.positions);
-    const saved = store.get<number[] | null>(SAVE_KEY, null);
+    const saved = store.get<number[] | null>(this.keys.sculpt, null);
     this.positions = saved && saved.length === sphere.positions.length ? Float32Array.from(saved) : sphere.positions;
     this.geometry = new BufferGeometry();
     this.geometry.setAttribute('position', new BufferAttribute(this.positions, 3));
@@ -153,7 +174,7 @@ export class ClayPrototype implements Prototype {
     this.geometry.computeVertexNormals();
     this.neighbors = buildNeighbors(sphere.indices, this.positions.length / 3);
     this.mirrorMap = buildMirror(this.rest);
-    const savedColor = store.get<string>(COLOR_KEY, CLAY_COLOR);
+    const savedColor = store.get<string>(this.keys.color, CLAY_COLOR);
     this.material = new MeshStandardMaterial({ color: new Color(savedColor), roughness: 0.85 });
     this.clay = new Mesh(this.geometry, this.material);
     this.clay.name = 'Clay';
@@ -163,23 +184,29 @@ export class ClayPrototype implements Prototype {
 
     this.panel = new CanvasPanel({ width: 0.36, height: 0.15, columns: 4, buttonHeight: 0.03, accent: this.accent });
     this.panel.mesh.name = 'ClayPanel';
-    // Beside the turntable so the clay stays unobstructed.
-    this.panel.mesh.position.set(0.31, 0.09, -0.04);
-    this.panel.mesh.rotation.set(-0.25, -0.5, 0, 'YXZ');
+    const compact = this.options.layout === 'compact';
+    // Beside the turntable so the clay stays unobstructed (behind it when compact).
+    if (compact) {
+      this.panel.mesh.position.set(0, 0.11, -0.17);
+      this.panel.mesh.rotation.set(-0.3, 0, 0, 'YXZ');
+    } else {
+      this.panel.mesh.position.set(0.31, 0.09, -0.04);
+      this.panel.mesh.rotation.set(-0.25, -0.5, 0, 'YXZ');
+    }
     this.panel.onPress = (id) => this.onButton(id);
     this.deskRoot.add(this.panel.mesh);
 
     // Colour wheel on the left: pinch to tint the clay.
     this.wheel = new ColorWheel(0.14, savedColor);
-    this.wheel.mesh.position.set(-0.3, 0.13, 0);
-    this.wheel.mesh.rotation.set(-0.2, 0.5, 0, 'YXZ');
+    this.wheel.mesh.position.set(compact ? 0.27 : -0.3, 0.13, 0);
+    this.wheel.mesh.rotation.set(-0.2, compact ? -0.5 : 0.5, 0, 'YXZ');
     this.wheel.onChange = (hex) => this.setColor(hex);
     this.wheel.mesh.visible = false;
     this.deskRoot.add(this.wheel.mesh);
 
     // Size slider in front of the turntable: 0.5x to 2x, logarithmic.
-    this.sizeSlider = new DeskSlider(0.2, store.get<number>(SCALE_KEY, 0.5), this.accent);
-    this.sizeSlider.group.position.set(0, 0.006, 0.165);
+    this.sizeSlider = new DeskSlider(compact ? 0.16 : 0.2, store.get<number>(this.keys.scale, 0.5), this.accent);
+    this.sizeSlider.group.position.set(compact ? 0.06 : 0, 0.006, compact ? 0.15 : 0.165);
     this.sizeSlider.format = (v) => `${sliderToScale(v).toFixed(1)}x`;
     this.sizeSlider.onChange = (v) => this.setScale(sliderToScale(v));
     this.deskRoot.add(this.sizeSlider.group);
@@ -188,7 +215,7 @@ export class ClayPrototype implements Prototype {
     // Print pad: a glowing ring where copies build up.
     this.printPad = new Mesh(new RingGeometry(0.045, 0.052, 48), new MeshStandardMaterial({ color: '#f4b860', emissive: '#f4b860', emissiveIntensity: 0.4, transparent: true, opacity: 0.7 }));
     this.printPad.rotation.x = -Math.PI / 2;
-    this.printPad.position.copy(PRINT_PAD).setY(0.002);
+    this.printPad.position.copy(this.printPadAt).setY(0.002);
     this.printPad.userData.hideInShots = true;
     this.deskRoot.add(this.printPad);
     // Prints build up behind a clipping plane.
@@ -210,12 +237,17 @@ export class ClayPrototype implements Prototype {
   private setScale(scale: number): void {
     this.clay.scale.setScalar(scale);
     this.clay.position.y = CLAY_Y + (scale - 1) * RADIUS * 0.6;
-    store.set(SCALE_KEY, this.sizeSlider.value);
+    store.set(this.keys.scale, this.sizeSlider.value);
   }
 
   private setColor(hex: string): void {
     this.material.color.set(hex);
-    store.set(COLOR_KEY, hex);
+    store.set(this.keys.color, hex);
+  }
+
+  /** True if this hand is pulling clay, spinning the turntable or carrying a print. */
+  owns(hand: HandState): boolean {
+    return this.pulls.some((p) => p.hand === hand) || this.spin?.hand === hand || this.printHolds.some((p) => p.hand === hand);
   }
 
   holding(): boolean {
@@ -231,7 +263,7 @@ export class ClayPrototype implements Prototype {
       return;
     }
     this.updatePrints(dt);
-    this.updateGestures();
+    if (this.options.gestures !== false) this.updateGestures();
     this.updateSpin();
     if (this.ctx.immersive) this.updateHands();
     else this.updateMouse();
@@ -475,22 +507,27 @@ export class ClayPrototype implements Prototype {
     const holder = new Group();
     holder.add(mesh);
     // Side by side on the pad: newest in the middle, older ones nudge back.
-    holder.position.copy(PRINT_PAD).setY(0.004);
+    holder.position.copy(this.printPadAt).setY(0.004);
+    // Older prints still on the pad nudge back to make room.
+    this.deskRoot.updateMatrixWorld(true);
+    const padWorld = this.deskRoot.localToWorld(this.printPadAt.clone());
     for (const p of this.prints) {
-      if (p.holder.position.distanceTo(holder.position) < 0.03) p.holder.position.z -= 0.09 * Math.max(0.6, scale);
+      if (p.holder.getWorldPosition(this.tmp).distanceTo(padWorld) < 0.03) p.holder.translateZ(-0.09 * Math.max(0.6, scale));
     }
     this.deskRoot.add(holder);
+    // Hand prints to the host's space so moving this tool leaves them where they are.
+    this.options.printsParent?.attach(holder);
     this.prints.push({ holder, mesh, material, height: (box.max.y - box.min.y) * scale, progress: 0, clip, settleTo: null });
     while (this.prints.length > MAX_PRINTS) this.removePrint(this.prints[0]);
     this.printed += 1;
-    Sfx.whoosh(this.deskRoot.localToWorld(PRINT_PAD.clone()));
+    Sfx.whoosh(padWorld);
     this.ctx.toast('Printing a copy. Grab it with thumb + middle finger.');
   }
 
   private removePrint(print: Print): void {
     this.prints = this.prints.filter((p) => p !== print);
     this.printHolds = this.printHolds.filter((h) => h.print !== print);
-    this.deskRoot.remove(print.holder);
+    print.holder.removeFromParent();
     print.mesh.geometry.dispose();
     print.material.dispose();
   }
@@ -549,12 +586,18 @@ export class ClayPrototype implements Prototype {
       const hold = this.printHolds[i];
       if (hold.hand.grabbing && hold.hand.tracked) {
         hold.pose.apply(hold.hand, hold.print.holder);
+        this.ctx.trash.near(hold.hand.holdPoint);
         continue;
       }
       this.printHolds.splice(i, 1);
+      const binned = this.ctx.trash.take(hold.hand.holdPoint);
       if (hold.hand.isMouse) {
         this.ctx.desk.getWorldPosition(this.tmp);
         this.ctx.setMousePlane(this.tmp, this.tmp2.set(0, 1, 0));
+      }
+      if (binned) {
+        this.removePrint(hold.print);
+        continue;
       }
       // Let go low over the desk: stand it upright on the desk.
       const h = hold.print.holder;
@@ -601,7 +644,7 @@ export class ClayPrototype implements Prototype {
   }
 
   private save(): void {
-    store.set(SAVE_KEY, Array.from(this.positions, (v) => Math.round(v * 1e5) / 1e5));
+    store.set(this.keys.sculpt, Array.from(this.positions, (v) => Math.round(v * 1e5) / 1e5));
   }
 
   private refresh(): void {

@@ -18,7 +18,7 @@ division.
 | 4 | **Clay** | Productivity / creative | Sculpt with your bare fingertips on a turntable; size slider, colour wheel, export to OBJ, and **Print copy**: a solid copy builds up beside the turntable and you can pick it up. |
 | 5 | **Sketch** | Productivity / creative | Pinch to draw in the air with either hand or both; grab a stroke with thumb + middle finger to move it. Colour wheel with recent colours, sizes, undo, autosave. |
 | 6 | **Desk Links** | Gaming (reference) | Fingertip mini golf on your desk, kept for comparing hand mechanics. |
-| 7 | **Studio** | Productivity / creative | Sketch, Conjure and the storyboard in one workspace: draw, conjure objects by voice or keyboard, arrange everything by hand, then frame shots with both hands onto the storyboard on your wall. |
+| 7 | **Studio** | Productivity / creative | A small desk OS. A dock opens tools as windows (Draw, Conjure, Clay, Storyboard), several at once; move a window by its handle bar, close it with its red button, and the layout is remembered. Draw, conjure, sculpt and arrange, then frame shots with both hands onto the storyboard. |
 
 ## Run it
 
@@ -92,7 +92,10 @@ fills with the app's colour for a pinch and gold for a grab.
 |---|---|
 | Poke a button with your index fingertip, or pinch on it | Press it |
 | Grab (thumb + middle) an object | Pick it up: cards, Conjure creations, Shot Board figures, Sketch strokes, Clay prints, the tutorial orb. It follows your hand, rotation included: turn your wrist to turn it. Release to drop. |
-| Grab one object with both hands | Scale and turn it (Conjure, Studio) |
+| Grab one object with both hands | Scale and turn it: Conjure creations and Sketch strokes |
+| Drop a held object on the bin (front-right corner of the desk) | Delete it: strokes, creations, Clay prints. Undo in Sketch brings strokes back |
+| Sketch **Erase**, then pinch across strokes | Erase them (Undo restores) |
+| Pinch or grab a Studio window's handle bar; poke its red button | Move the window; close it |
 | Pinch both hands at the same moment, close together, then pull apart | Frame a camera shot, in any app (Sketch included); let go to capture it to the album. Pinches that start at different moments draw or grab as usual |
 | Pinch a dial or rim and move around it | Twist it (timer, turntable) |
 | Pinch or grab the bar on the front edge of the desk mat | Move the whole workspace; turn your wrist to turn it. It stays there next time |
@@ -215,7 +218,9 @@ src/protos/conjure/      Conjure (intent.ts parser, kit.ts offline generator, re
 src/protos/shotboard/    Shot Board
 src/protos/clay/         Clay (sculpt.ts is the pure sculpting maths)
 src/protos/sketch/       Sketch (pinch-to-draw strokes, grab to move them)
-src/protos/studio.ts     Studio: embeds Sketch + Conjure + a storyboard wall
+src/protos/studio.ts     Studio desk OS: dock, windows, gesture routing between tools
+src/core/window.ts       movable desk window (tray, handle bar, close button)
+src/core/trash.ts        the desk bin
 src/core/storyboard.ts   storyboard wall and animatic player (Shot Board, Studio)
 src/core/grab.ts         hand-rotation hold used by every pickable object
 src/core/camera-frame.ts two-hand frame gesture and the shared shot album
@@ -238,7 +243,9 @@ For the automated browser tests, `window.lab` exposes `go(id)`, `state()`,
 - the **whole tutorial**: fingertip poke, grab-carry, twist, and the palm-up
   wrist menu;
 - the thumb + middle grab, using IWER's `pinch-middle` hand pose: moving
-  Sketch strokes, picking up Clay prints, and Studio's arrangement of
+  Sketch strokes, two-hand scaling a stroke, the bin, Erase and Undo,
+  picking up Clay prints, Studio windows (open, move, close, saved layout,
+  gestures going to the right tool), and Studio's arrangement of
   strokes, creations and two-hand shots;
 - auto-placing the desk on the emulated room's labelled table;
 - pinch-to-place fallback;
