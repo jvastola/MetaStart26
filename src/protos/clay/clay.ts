@@ -12,8 +12,8 @@
  * Print makes a solid copy of the sculpture that "prints" up from a pad
  * beside the turntable. Grab a print with thumb + middle finger to pick it
  * up; let go low over the desk and it settles onto the desk. The small pin
- * in front of a print keeps it where it is: pinned prints cannot be knocked
- * about, survive Clear prints, and are still there next session.
+ * in front of a print pins it to the desk itself: it then stays where it is
+ * in every app (Home included) and is still there next session.
  *
  * Grab the turntable base (thumb + middle) and raise or lower your hand to
  * scale the sculpture; the size slider follows.
@@ -29,6 +29,7 @@ import {
   Mesh,
   MeshStandardMaterial,
   Plane,
+  Quaternion,
   Raycaster,
   RingGeometry,
   TorusGeometry,
@@ -89,34 +90,6 @@ interface Print {
   settleTo: number | null;
   pinned: boolean;
   pinButton: IconButton;
-}
-
-/** A pinned print as saved: vertex positions (base64 float32), colour, transform. */
-interface SavedPrint {
-  v: string;
-  c: string;
-  /** Mesh scale, rotation and lift inside its holder. */
-  m: [number, number, number];
-  /** Holder position xyz, quaternion xyzw, scale. */
-  t: number[];
-  h: number;
-}
-
-const PINS_KEY = 'clay-pinned-v1';
-const MAX_PINNED = 4;
-
-function toBase64(a: Float32Array): string {
-  const bytes = new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
-  let out = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) out += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(out);
-}
-
-function fromBase64(text: string): Float32Array {
-  const bin = atob(text);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
-  return new Float32Array(bytes.buffer);
 }
 
 /** Lets Studio embed Clay as a compact window with its own saved sculpt. */
@@ -264,12 +237,12 @@ export class ClayPrototype implements Prototype {
   private readonly tmp2 = new Vector3();
   private readonly raycaster = new Raycaster();
   private readonly euler = new Euler();
-  private readonly keys: { sculpt: string; color: string; scale: string; brush: string; pins: string };
+  private readonly keys: { sculpt: string; color: string; scale: string; brush: string };
   private readonly printPadAt: Vector3;
 
   constructor(private readonly options: ClayOptions = {}) {
     const prefix = options.keyPrefix ?? '';
-    this.keys = { sculpt: prefix + SAVE_KEY, color: prefix + COLOR_KEY, scale: prefix + SCALE_KEY, brush: prefix + BRUSH_KEY, pins: prefix + PINS_KEY };
+    this.keys = { sculpt: prefix + SAVE_KEY, color: prefix + COLOR_KEY, scale: prefix + SCALE_KEY, brush: prefix + BRUSH_KEY };
     this.layoutMode = options.layout ?? 'full';
     this.printPadAt = new Vector3();
   }
@@ -342,7 +315,6 @@ export class ClayPrototype implements Prototype {
     this.printPad.userData.hideInShots = true;
     this.deskRoot.add(this.printPad);
     this.setLayout(this.layoutMode);
-    this.loadPins();
     // Prints build up behind a clipping plane.
     ctx.renderer.localClippingEnabled = true;
   }
@@ -734,54 +706,33 @@ export class ClayPrototype implements Prototype {
     holder.add(pinButton.group);
     const print: Print = { holder, mesh, material, height: (box.max.y - box.min.y) * scale, progress: building ? 0 : 1, clip, settleTo: null, pinned: false, pinButton };
     pinButton.onPress = () => this.togglePin(print);
+    pinButton.label = 'Pin to the desk (stays in every app)';
     return print;
   }
 
+  /** Hand a print over to the desk: it stays there in every app and next session. */
   private togglePin(print: Print): void {
-    if (!print.pinned && this.prints.filter((p) => p.pinned).length >= MAX_PINNED) {
-      this.ctx.toast(`Up to ${MAX_PINNED} prints can be pinned.`);
-      return;
-    }
-    print.pinned = !print.pinned;
-    print.pinButton.active = print.pinned;
-    print.pinButton.label = print.pinned ? 'Pinned: stays here (press to unpin)' : 'Pin it here';
-    this.printHolds = this.printHolds.filter((h) => h.print !== print);
-    this.savePins();
+    if (print.progress < 1) return;
+    print.holder.updateMatrixWorld(true);
+    const pos = print.holder.getWorldPosition(new Vector3());
+    const quat = print.holder.getWorldQuaternion(new Quaternion());
+    const scale = print.holder.getWorldScale(new Vector3()).x / this.deskScale();
+    this.ctx.deskObjects.addPrint(
+      Float32Array.from(print.mesh.geometry.attributes.position.array as Float32Array),
+      `#${print.material.color.getHexString()}`,
+      [print.mesh.scale.x, print.mesh.rotation.y, print.mesh.position.y],
+      print.height,
+      pos,
+      quat,
+      scale,
+    );
+    this.removePrint(print);
+    this.ctx.toast('Pinned to the desk. It stays here in every app.');
   }
 
-  private savePins(): void {
-    const out: SavedPrint[] = this.prints
-      .filter((p) => p.pinned)
-      .map((p) => {
-        const h = p.holder;
-        return {
-          v: toBase64(p.mesh.geometry.attributes.position.array as Float32Array),
-          c: `#${p.material.color.getHexString()}`,
-          m: [p.mesh.scale.x, p.mesh.rotation.y, p.mesh.position.y],
-          t: [...h.position.toArray(), ...h.quaternion.toArray(), h.scale.x],
-          h: p.height,
-        };
-      });
-    store.set(this.keys.pins, out);
-  }
-
-  private loadPins(): void {
-    for (const saved of store.get<SavedPrint[]>(this.keys.pins, [])) {
-      try {
-        const print = this.buildPrint(fromBase64(saved.v), saved.c, saved.m[0], saved.m[1], saved.m[2], false);
-        const [x, y, z, qx, qy, qz, qw, sc] = saved.t;
-        (this.options.printsParent ?? this.deskRoot).add(print.holder);
-        print.holder.position.set(x, y, z);
-        print.holder.quaternion.set(qx, qy, qz, qw);
-        print.holder.scale.setScalar(sc ?? 1);
-        print.pinned = true;
-        print.pinButton.active = true;
-        print.pinButton.label = 'Pinned: stays here (press to unpin)';
-        this.prints.push(print);
-      } catch {
-        // A damaged save: skip it.
-      }
-    }
+  /** The desk's own world scale (1 unless the room is scaled). */
+  private deskScale(): number {
+    return this.ctx.desk.getWorldScale(new Vector3()).x;
   }
 
   private print(): void {

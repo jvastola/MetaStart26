@@ -33,6 +33,7 @@ import { VirtualKeyboard } from './core/keyboard.js';
 import { type LabContext, type Prototype, store } from './core/context.js';
 import { HeldPose } from './core/grab.js';
 import { TRASH_POS, TrashBin } from './core/trash.js';
+import { DeskObjects } from './core/desk-objects.js';
 import { IconButton } from './core/icon-button.js';
 import { HandRays } from './core/rays.js';
 import { grabDistance, HandState, Hands, pointerDistance } from './core/hands.js';
@@ -76,6 +77,7 @@ export class LabSystem extends createSystem({
   private keyboard = new VirtualKeyboard();
   private deskGrab: { hand: HandState; pose: HeldPose } | null = null;
   private trashBin!: TrashBin;
+  private deskObjects!: DeskObjects;
   /** Home and How-to buttons on the front-left corner of the desk, in every app. */
   private homeButton!: IconButton;
   private helpButton!: IconButton;
@@ -152,6 +154,12 @@ export class LabSystem extends createSystem({
       if (this.active) this.showHowTo(this.active, true);
     };
     this.homeButton.group.visible = this.helpButton.group.visible = false;
+    this.deskObjects = new DeskObjects(this.renderer, this.trashBin);
+    this.desk.add(this.deskObjects.group);
+    this.deskObjects.group.visible = false;
+    this.deskObjects.load();
+    this.deskObjects.mousePlane = (at) => this.ctx.setMousePlane(at, this.camera.getWorldDirection(new Vector3()).negate());
+    this.deskObjects.mouseRelease = () => this.ctx.setMousePlane(this.desk.getWorldPosition(new Vector3()), new Vector3(0, 1, 0));
     this.desk.add(this.homeButton.group, this.helpButton.group);
 
     const system = this;
@@ -178,6 +186,7 @@ export class LabSystem extends createSystem({
       goHome: () => this.go('hub'),
       album: this.album,
       trash: this.trashBin,
+      deskObjects: this.deskObjects,
       capture: (eye: Vector3, target: Vector3, fov: number) => this.shoot(eye, target, fov),
       openKeyboard: (request) => this.keyboard.open(request),
     };
@@ -258,6 +267,7 @@ export class LabSystem extends createSystem({
     next.deskRoot.visible = this.setup === 'ready';
     next.wallRoot.visible = this.setup === 'ready';
     this.trashBin.group.visible = this.setup === 'ready' && next.trash === true;
+    this.deskObjects.group.visible = this.setup === 'ready';
     this.mat.setAccent(next.accent);
     for (const c of this.cursors) c.setAccent(next.accent);
     next.enter();
@@ -305,6 +315,7 @@ export class LabSystem extends createSystem({
     this.active.deskRoot.visible = show;
     this.active.wallRoot.visible = show;
     this.trashBin.group.visible = show && this.active.trash === true;
+    this.deskObjects.group.visible = show;
   }
 
   private updateSetup(dt: number): void {
@@ -564,6 +575,8 @@ export class LabSystem extends createSystem({
     // Round buttons first: they are the most specific target (a window's
     // buttons can sit right next to the desk's own move bar).
     IconButton.updateAll(this.ctx.pointers, this.camera.getWorldPosition(this.eye), dt);
+    // Things pinned to the desk come next: a grab on one never reaches the app.
+    this.deskObjects.update(this.ctx.pointers, dt);
     this.updateDeskGrab();
     this.updateWristMenu(dt);
     this.updateCoach(dt);
@@ -573,7 +586,7 @@ export class LabSystem extends createSystem({
     const frameEnabled = this.ctx.immersive && !this.wristOpen && this.deskGrab == null && !(this.active?.holding?.() ?? false);
     const caption = this.frame.update(this.hands.left, this.hands.right, this.head, frameEnabled, dt);
     this.ctx.frameArmed = this.frame.isArmed;
-    if (caption) this.afterShot(caption);
+    if (caption) this.afterShot(caption, true);
     this.active?.update(dt);
     this.trashBin.update(dt);
     this.updateDeskButtons();
@@ -586,7 +599,13 @@ export class LabSystem extends createSystem({
     return caption;
   }
 
-  private afterShot(caption: string): void {
+  private afterShot(caption: string, framed = false): void {
+    // A shot framed with both hands also pops out a photo print where it was framed.
+    if (framed) {
+      const shot = this.album.shots[this.album.shots.length - 1];
+      const f = this.frame.lastFrame;
+      if (shot) this.deskObjects.addPhotoFromShot(shot, f.center, this.camera.getWorldPosition(this.tmp), Math.min(0.16, Math.max(0.08, f.width * 0.8)));
+    }
     Sfx.shutter();
     this.toast(`Shot ${this.album.shots.length} saved (${caption}). See it in Shot Board.`);
   }
@@ -1010,6 +1029,14 @@ export class LabSystem extends createSystem({
         }
         return true;
       }).map((b) => b.id),
+      /** Desk objects (pinned prints, photo prints) and helpers. */
+      deskObjects: () => this.deskObjects.debug(),
+      deskObjectWorld: (i: number) => {
+        const o = this.deskObjects.objects[i];
+        if (!o) return null;
+        const c = o.center(new Vector3());
+        return { x: c.x, y: c.y, z: c.z, pin: o.pinButton.id };
+      },
       /** Trash bin: world position of its mouth, items thrown away, shown. */
       trash: () => {
         this.desk.updateMatrixWorld(true);

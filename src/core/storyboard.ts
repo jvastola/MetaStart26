@@ -4,6 +4,10 @@
  * last shot). Playing lifts each shot into a large card in front, one every
  * 1.6 s, like an animatic. Shot Board hangs one on the wall; Studio has one
  * as a window.
+ *
+ * Cards can be grabbed (thumb + middle): drop one on another card's place to
+ * reorder the story, or pull it well away from the board to get a photo
+ * print of it on the desk.
  */
 
 import {
@@ -17,7 +21,10 @@ import {
   PlaneGeometry,
   SRGBColorSpace,
 } from '@iwsdk/core';
+import { Vector3 } from '@iwsdk/core';
 import type { LabContext } from './context.js';
+import { HeldPose } from './grab.js';
+import { grabDistance, type HandState } from './hands.js';
 import { IconButton } from './icon-button.js';
 import { CanvasPanel } from './panel.js';
 import { Sfx } from './sfx.js';
@@ -36,6 +43,8 @@ interface Card {
   badgeCanvas: HTMLCanvasElement;
   badgeTexture: CanvasTexture;
   index: number;
+  home: Vector3;
+  homeYaw: number;
 }
 
 export class StoryboardWall {
@@ -49,12 +58,16 @@ export class StoryboardWall {
   /** Index of the shot being played, or -1. */
   playing = -1;
   private playTime = 0;
+  private drag: { card: Card; slot: number; hand: HandState; pose: HeldPose } | null = null;
+  private readonly tmp = new Vector3();
+  private readonly parent: Group;
 
   constructor(
     private readonly ctx: LabContext,
     parent: Group,
     accent: string,
   ) {
+    this.parent = parent;
     this.board = new CanvasPanel({ width: 0.66, height: 0.05, columns: 1, accent });
     this.board.mesh.name = 'Storyboard';
     this.board.mesh.position.set(0, 0.165, 0);
@@ -89,7 +102,7 @@ export class StoryboardWall {
       group.userData.hideInShots = true;
       group.visible = false;
       parent.add(group);
-      this.cards.push({ group, picture, badge, badgeCanvas, badgeTexture, index: -1 });
+      this.cards.push({ group, picture, badge, badgeCanvas, badgeTexture, index: -1, home: group.position.clone(), homeYaw: group.rotation.y });
     }
 
     this.preview = new ThreeGroup();
@@ -127,6 +140,10 @@ export class StoryboardWall {
     this.cards.forEach((card, i) => {
       const shot = shots[i];
       card.group.visible = shot != null && this.playing < 0;
+      if (this.drag?.card !== card) {
+        card.group.position.copy(card.home);
+        card.group.rotation.set(0, card.homeYaw, 0);
+      }
       if (!shot) return;
       const material = card.picture.material as MeshBasicMaterial;
       if (material.map !== shot.texture) {
@@ -158,9 +175,15 @@ export class StoryboardWall {
     this.undoButton.disabled = all.length === 0;
   }
 
+  /** A card is being carried. */
+  get dragging(): boolean {
+    return this.drag != null;
+  }
+
   update(dt: number): void {
     this.board.update([], dt);
     this.playButton.active = this.playing >= 0;
+    this.updateDrag();
     if (this.playing < 0) return;
     const shots = this.ctx.album.shots.slice(-BOARD_SLOTS);
     this.playTime += dt;
@@ -182,6 +205,83 @@ export class StoryboardWall {
     // Ease the preview forward as each shot starts.
     const k = Math.min(1, this.playTime / 0.25);
     this.preview.scale.setScalar(0.92 + k * 0.08);
+  }
+
+  private updateDrag(): void {
+    if (!this.drag) {
+      if (this.playing >= 0) return;
+      for (const hand of this.ctx.pointers) {
+        if (!hand.tracked || !hand.grabStarted) continue;
+        let best = -1;
+        let bestD = 0.07;
+        this.cards.forEach((card, i) => {
+          if (!card.group.visible) return;
+          const d = grabDistance(hand, card.group.getWorldPosition(this.tmp));
+          if (d < bestD) {
+            best = i;
+            bestD = d;
+          }
+        });
+        if (best < 0) continue;
+        const card = this.cards[best];
+        if (hand.isMouse) {
+          // Drag on a plane through the card facing the camera, starting right on the card.
+          const at = card.group.getWorldPosition(new Vector3());
+          this.ctx.setMousePlane(at, this.ctx.camera.getWorldDirection(new Vector3()).negate());
+          hand.pinchPoint.copy(at);
+          hand.grabPoint.copy(at);
+        }
+        const pose = new HeldPose();
+        pose.begin(hand, card.group);
+        this.drag = { card, slot: best, hand, pose };
+        card.group.renderOrder = 5;
+        hand.clearEdges();
+        Sfx.pinch(hand.isMouse ? undefined : hand.holdPoint);
+        return;
+      }
+      return;
+    }
+    const { card, slot, hand, pose } = this.drag;
+    if (hand.grabbing && hand.tracked) {
+      pose.apply(hand, card.group);
+      return;
+    }
+    this.drag = null;
+    if (hand.isMouse) this.ctx.setMousePlane(this.ctx.desk.getWorldPosition(new Vector3()), new Vector3(0, 1, 0));
+    const at = card.group.position;
+    const all = this.ctx.album.shots;
+    const first = all.length - Math.min(all.length, BOARD_SLOTS);
+    if (Math.abs(at.z) < 0.12 && Math.abs(at.x) < 0.4 && Math.abs(at.y) < 0.22) {
+      // Dropped on the board: take the nearest place.
+      let to = slot;
+      let bestD = Infinity;
+      this.cards.forEach((c, i) => {
+        if (first + i >= all.length) return;
+        const d = Math.hypot(c.home.x - at.x, c.home.y - at.y);
+        if (d < bestD) {
+          bestD = d;
+          to = i;
+        }
+      });
+      if (to !== slot) {
+        this.ctx.album.move(first + slot, first + to);
+        Sfx.place();
+      } else Sfx.place();
+    } else {
+      // Pulled off the board: a photo print of it on the desk.
+      const shot = all[first + slot];
+      const world = card.group.getWorldPosition(new Vector3());
+      if (shot) this.ctx.deskObjects.addPhotoFromShot(shot, world, this.ctx.camera.getWorldPosition(this.tmp), 0.12);
+    }
+    this.layout();
+  }
+
+  /** World centre of a card, for tests. */
+  cardWorld(i: number): { x: number; y: number; z: number } | null {
+    const card = this.cards[i];
+    if (!card?.group.visible) return null;
+    const p = card.group.getWorldPosition(new Vector3());
+    return { x: p.x, y: p.y, z: p.z };
   }
 
   /** Run the board as an animatic, one shot every 1.6 s. */

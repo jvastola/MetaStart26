@@ -15,7 +15,7 @@
  *     middle and shows its full controls; press focus again to go back.
  *
  * Strokes, creations and prints live on the desk, not in the windows. Loop
- * around any of them (hold a grab in empty air and move) to select them
+ * a box around any of them (hold a grab in empty air and move) to select them
  * together; grab to move, both hands to scale, the bin or menu to delete.
  *
  * Who gets a gesture: window bars, then the selection, then Clay, Conjure,
@@ -73,7 +73,7 @@ export class StudioPrototype implements Prototype {
   readonly howTo = [
     'Round buttons on the left open tools. Point at one to see its name.',
     'Window bars: pin keeps controls out, focus gives a tool the desk.',
-    'Hold a grab (thumb + middle) in empty air and loop around things to select.',
+    'Hold a grab (thumb + middle) in empty air and stretch a box to select.',
   ];
   readonly deskRoot = new Group();
   readonly wallRoot = new Group();
@@ -236,6 +236,7 @@ export class StudioPrototype implements Prototype {
     return (
       [...this.windows.values()].some((w) => w.moving) ||
       this.selection.busy ||
+      this.board.dragging ||
       this.sketch.holding() ||
       (this.win('conjure').open && this.conjure.holding()) ||
       (this.win('clay').open && this.clay.holding())
@@ -245,8 +246,9 @@ export class StudioPrototype implements Prototype {
   update(dt: number): void {
     const pointers = this.ctx.pointers;
     for (const w of this.windows.values()) w.update(pointers, dt);
-    this.selection.update(dt);
+    // Storyboard cards take their grabs before an air grab could start a selection box.
     if (this.win('board').open) this.board.update(dt);
+    this.selection.update(dt);
     if (this.win('clay').open) {
       this.clay.update(dt);
       this.consume((h) => this.clay.owns(h));

@@ -13,6 +13,7 @@ import type { Album } from './camera-frame.js';
 import type { HandState, Hands } from './hands.js';
 import type { KeyboardRequest } from './keyboard.js';
 import type { TrashBin } from './trash.js';
+import type { DeskObjects } from './desk-objects.js';
 
 export interface LabContext {
   readonly world: World;
@@ -44,6 +45,8 @@ export interface LabContext {
   readonly album: Album;
   /** Open the desk keyboard (with mic) for text entry. */
   openKeyboard(request: KeyboardRequest): void;
+  /** Pinned prints and photo prints that live on the desk in every app. */
+  readonly deskObjects: DeskObjects;
   /** The desk's trash bin (shown for prototypes with `trash: true`). */
   readonly trash: TrashBin;
   /** Render a shot from `eye` toward `target` into the album; returns its caption. */

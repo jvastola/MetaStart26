@@ -7,7 +7,7 @@
  *                press, twist, slide.)
  *   3. Grab    - thumb + MIDDLE: grab the orb, carry it into the ring. (Pick
  *                things up.)
- *   4. Select  - hold a grab in empty air and draw a loop around the cubes.
+ *   4. Select  - hold a grab in empty air and stretch a box around the cubes.
  *   5. Menu    - turn your left palm toward your face.
  *   6. Home    - press the Home button on the desk's front-left corner.
  *
@@ -133,7 +133,7 @@ export class IntroPrototype implements Prototype {
     this.deskRoot.add(this.dial);
 
     // Hints: a ghost fingertip that acts out the move, and a pulsing ring.
-    // 4. Three cubes to loop around.
+    // 4. Three cubes to box in.
     const cubeMat = new MeshStandardMaterial({ color: '#c7a6ff', roughness: 0.4 });
     for (const at of CUBES) {
       const cube = new Mesh(new BoxGeometry(0.026, 0.026, 0.026), cubeMat);
@@ -371,9 +371,9 @@ export class IntroPrototype implements Prototype {
         break;
       }
       case 'select': {
-        // Trace a loop around the cubes, as seen from in front.
-        const a = cycle * Math.PI * 2;
-        this.ghost.position.set(Math.cos(a) * 0.13, 0.05 + Math.sin(a) * 0.045, 0.03);
+        // Stretch from one corner past the cubes to the other.
+        const k = Math.min(1, Math.max(0, (cycle - 0.1) / 0.7));
+        this.ghost.position.set(-0.12 + k * 0.24, 0.07 - k * 0.05, 0.08 - k * 0.1);
         this.pulse.position.set(0, 0.003, 0.02);
         break;
       }
@@ -396,7 +396,7 @@ export class IntroPrototype implements Prototype {
       poke: ['Poke', mouse ? 'Click the glowing button.' : 'Press the glowing button with your index fingertip.'],
       twist: ['Pinch: thumb + INDEX', mouse ? 'Drag around the dial a quarter turn.' : 'Pinch the dial rim and turn it to the mark. Pinch draws, presses, twists and slides.'],
       carry: ['Grab: thumb + MIDDLE', mouse ? 'Drag the orb into the ring.' : 'Grab the orb with thumb + middle finger, carry it into the ring. Grab picks things up.'],
-      select: ['Select: hold a grab in the air', mouse ? 'Right-drag a loop around all three cubes.' : 'Grab in empty air (not on a cube), keep holding, draw a loop around all three.'],
+      select: ['Select: hold a grab in the air', mouse ? 'Right-drag a box across all three cubes.' : 'Grab in empty air beside the cubes, keep holding, and stretch the box over all three.'],
       menu: ['Your menu', mouse ? 'In the headset, turn your left palm toward you. Here, use the bar below.' : 'Turn your left palm toward your face.'],
       home: ['Home', mouse ? 'Click the house button on the front-left corner of the desk.' : 'Press the house button on the front-left corner of the desk. It is there in every app.'],
     };
@@ -459,9 +459,7 @@ export class IntroPrototype implements Prototype {
       c.setLineDash([s * 0.06, s * 0.05]);
       c.strokeStyle = color;
       c.lineWidth = s * 0.035;
-      c.beginPath();
-      c.ellipse(s * 0.05, -0.3 * s, s * 0.55, s * 0.3, 0, 0, Math.PI * 2);
-      c.stroke();
+      c.strokeRect(-0.5 * s, -0.62 * s, s * 1.1, s * 0.6);
       c.setLineDash([]);
     }
     if (step === 'menu') {

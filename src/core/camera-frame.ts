@@ -36,6 +36,8 @@ const MIN_FRAME = 0.08;
 const UP = new Vector3(0, 1, 0);
 
 export interface Shot {
+  /** Stable number, for tests and reordering. */
+  id?: number;
   texture: Texture;
   target?: WebGLRenderTarget;
   caption: string;
@@ -47,9 +49,20 @@ export class Album {
   readonly shots: Shot[] = [];
   private readonly listeners = new Set<() => void>();
 
+  private nextId = 1;
+
   add(shot: Shot): void {
+    shot.id = this.nextId++;
     this.shots.push(shot);
     if (this.shots.length > MAX_SHOTS) this.shots.shift()?.dispose();
+    this.changed();
+  }
+
+  /** Reorder: move the shot at `from` to `to` (indices into `shots`). */
+  move(from: number, to: number): void {
+    if (from === to || from < 0 || from >= this.shots.length) return;
+    const [shot] = this.shots.splice(from, 1);
+    this.shots.splice(Math.max(0, Math.min(this.shots.length, to)), 0, shot);
     this.changed();
   }
 
@@ -78,6 +91,8 @@ export class FrameCamera {
   private readonly up = new Vector3();
   private readonly tmp = new Vector3();
   private armed = false;
+  /** Where the last captured frame was, for the photo print that pops out of it. */
+  readonly lastFrame = { center: new Vector3(), right: new Vector3(), up: new Vector3(), width: 0.1, height: 0.06 };
   private framing = 0;
   private clock = 0;
   private readonly started = { left: -10, right: -10 };
@@ -132,6 +147,11 @@ export class FrameCamera {
     this.line.visible = false;
     if (!shoot) return null;
     const [w, h, dist] = [this.size.x, this.size.y, this.size.z];
+    this.lastFrame.center.copy(this.center);
+    this.lastFrame.right.copy(this.right);
+    this.lastFrame.up.copy(this.up);
+    this.lastFrame.width = w;
+    this.lastFrame.height = h;
     const aspect = Math.min(2.4, Math.max(1, w / Math.max(h, 1e-3)));
     const fov = (2 * Math.atan(w / aspect / 2 / Math.max(dist, 0.05)) * 180) / Math.PI;
     return this.capture(head, this.center, Math.min(90, Math.max(12, fov)));

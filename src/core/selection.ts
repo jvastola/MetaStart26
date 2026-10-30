@@ -1,11 +1,13 @@
 /**
- * Multi-select: loop around things, then act on all of them at once.
+ * Multi-select: stretch a box around things, then act on all of them.
  *
- *   Loop     - grab (thumb + middle) in empty air and keep holding: your
- *              hand draws a loop. (With the Select tool on, a pinch does the
- *              same.) Everything whose centre falls inside the loop as you
- *              see it is selected, near or far. A grab ON something still
- *              picks that thing up straight away.
+ *   Box      - grab (thumb + middle) in empty air and keep holding: a glowing
+ *              box stretches from where you started to your hand, lined up
+ *              with the desk. Everything whose centre is inside lights up as
+ *              you go; let go to select it. (With the Select tool on, a
+ *              pinch does the same.) A grab ON something still picks that
+ *              thing up straight away. A flat box (dragged along the desk)
+ *              still reaches things resting on it.
  *   Move     - grab (thumb + middle) any selected thing: the whole selection
  *              follows your hand and turns with your wrist.
  *   Scale    - grab the selection with both hands and pull apart / twist.
@@ -21,12 +23,10 @@ import {
   BufferGeometry,
   Color,
   Group,
-  CylinderGeometry,
-  InstancedMesh,
-  Line,
-  LineDashedMaterial,
-  MeshStandardMaterial,
-  SphereGeometry,
+  BoxGeometry,
+  EdgesGeometry,
+  LineBasicMaterial,
+  LineSegments,
   Matrix4,
   Mesh,
   MeshBasicMaterial,
@@ -62,7 +62,8 @@ export interface SelectionSource {
   moved?(items: Selectable[]): void;
 }
 
-const MAX_LASSO_POINTS = 400;
+/** The selection box is never thinner than this on any side (m). */
+const MIN_BOX = 0.06;
 const TAP_TIME = 0.25;
 /** An air grab becomes a loop after this long, or this far. */
 const AIR_HOLD = 0.25;
@@ -92,12 +93,12 @@ export class Selection {
   /** Set by tests: how many things the last loop caught. */
   lastCaught = 0;
   private readonly sources: SelectionSource[] = [];
-  private lasso: { hand: HandState; via: 'pinch' | 'grab'; points: Vector3[] } | null = null;
-  /** The loop as a glowing tube: beads at each point, segments between. */
-  private readonly beads: InstancedMesh;
-  private readonly links: InstancedMesh;
-  /** Dashed line that shows where the loop will close. */
-  private readonly closer: Line;
+  /** The box being stretched: corners in desk space. */
+  private lasso: { hand: HandState; via: 'pinch' | 'grab'; a: Vector3; b: Vector3 } | null = null;
+  private readonly box: Mesh;
+  private readonly boxEdges: LineSegments;
+  private readonly min = new Vector3();
+  private readonly max = new Vector3();
   /** Grabs that began on empty air: a loop once held or moved, a deselect if just tapped. */
   private readonly air = new Map<HandState, { time: number; at: Vector3 }>();
   private hold: GroupHold | null = null;
@@ -111,11 +112,7 @@ export class Selection {
   private readonly eye = new Vector3();
   private readonly m = new Matrix4();
   private readonly q = new Quaternion();
-  private readonly lassoMat: MeshStandardMaterial;
-  private readonly im = new Matrix4();
-  private readonly iq = new Quaternion();
-  private readonly is = new Vector3();
-  private readonly idir = new Vector3();
+
   private readonly haloMat: MeshBasicMaterial;
 
   constructor(
@@ -124,14 +121,12 @@ export class Selection {
   ) {
     this.group.name = 'Selection';
     this.group.userData.hideInShots = true;
-    this.lassoMat = new MeshStandardMaterial({ color: accent, emissive: accent, emissiveIntensity: 0.9, roughness: 0.3 });
-    this.beads = new InstancedMesh(new SphereGeometry(0.0042, 10, 8), this.lassoMat, MAX_LASSO_POINTS);
-    this.links = new InstancedMesh(new CylinderGeometry(0.0028, 0.0028, 1, 8, 1, true), this.lassoMat, MAX_LASSO_POINTS);
-    this.beads.count = this.links.count = 0;
-    this.beads.frustumCulled = this.links.frustumCulled = false;
-    this.closer = new Line(new BufferGeometry().setFromPoints([new Vector3(), new Vector3()]), new LineDashedMaterial({ color: accent, dashSize: 0.01, gapSize: 0.008, transparent: true, opacity: 0.8 }));
-    this.closer.frustumCulled = false;
-    this.beads.visible = this.links.visible = this.closer.visible = false;
+    const unit = new BoxGeometry(1, 1, 1);
+    this.box = new Mesh(unit, new MeshBasicMaterial({ color: new Color(accent), transparent: true, opacity: 0.12, depthWrite: false }));
+    this.boxEdges = new LineSegments(new EdgesGeometry(unit), new LineBasicMaterial({ color: accent, transparent: true, opacity: 0.95 }));
+    this.box.renderOrder = this.boxEdges.renderOrder = 34;
+    this.box.frustumCulled = this.boxEdges.frustumCulled = false;
+    this.box.visible = this.boxEdges.visible = false;
     this.haloMat = new MeshBasicMaterial({ color: new Color(accent), transparent: true, opacity: 0.55, depthWrite: false });
     const menu: [string, string, string, () => void][] = [
       ['sel:duplicate', 'duplicate', 'Duplicate', () => this.duplicate()],
@@ -147,7 +142,7 @@ export class Selection {
       this.menu.add(b.group);
     });
     this.menu.visible = false;
-    this.group.add(this.menu, this.beads, this.links, this.closer);
+    this.group.add(this.menu, this.box, this.boxEdges);
     // Children are placed in world coordinates wherever the group is parented.
     this.group.matrixAutoUpdate = false;
   }
@@ -210,57 +205,61 @@ export class Selection {
 
   // ------------------------------------------------------------ lasso
 
+  /** Desk-space copy of a world point. */
+  private toDesk(world: Vector3, out: Vector3): Vector3 {
+    this.ctx.desk.updateMatrixWorld(true);
+    return this.ctx.desk.worldToLocal(out.copy(world));
+  }
+
   private beginLasso(hand: HandState, via: 'pinch' | 'grab', from: Vector3): void {
-    this.lasso = { hand, via, points: [] };
-    this.beads.count = this.links.count = 0;
-    this.addLassoPoint(from);
-    this.beads.visible = this.links.visible = this.closer.visible = true;
+    const a = this.toDesk(from, new Vector3());
+    this.lasso = { hand, via, a, b: a.clone() };
+    this.box.visible = this.boxEdges.visible = true;
+    this.layoutBox();
     Sfx.blip(880, hand.isMouse ? undefined : from);
   }
 
-  /** Grow the tube by one bead and the link to the previous one. */
-  private addLassoPoint(p: Vector3): void {
-    const pts = this.lasso!.points;
-    const i = pts.length;
-    pts.push(p.clone());
-    this.im.makeTranslation(p.x, p.y, p.z);
-    this.beads.setMatrixAt(i, this.im);
-    this.beads.count = i + 1;
-    this.beads.instanceMatrix.needsUpdate = true;
-    if (i > 0) {
-      const prev = pts[i - 1];
-      this.idir.subVectors(p, prev);
-      const len = this.idir.length();
-      this.iq.setFromUnitVectors(UP, this.idir.multiplyScalar(1 / Math.max(len, 1e-6)));
-      this.im.compose(this.tmp.addVectors(p, prev).multiplyScalar(0.5), this.iq, this.is.set(1, len, 1));
-      this.links.setMatrixAt(i - 1, this.im);
-      this.links.count = i;
-      this.links.instanceMatrix.needsUpdate = true;
+  /**
+   * The box in desk space, with a minimum thickness so a flat drag still has
+   * depth, and reaching down to the desk when it starts just above it.
+   */
+  private boxBounds(): void {
+    const { a, b } = this.lasso!;
+    this.min.copy(a).min(b);
+    this.max.copy(a).max(b);
+    for (const axis of ['x', 'y', 'z'] as const) {
+      const size = this.max[axis] - this.min[axis];
+      if (size < MIN_BOX) {
+        const grow = (MIN_BOX - size) / 2;
+        this.min[axis] -= grow;
+        this.max[axis] += grow;
+      }
     }
-    // The dashed closing line from here back to the start.
-    const pos = this.closer.geometry.attributes.position;
-    pos.setXYZ(0, p.x, p.y, p.z);
-    pos.setXYZ(1, pts[0].x, pts[0].y, pts[0].z);
-    pos.needsUpdate = true;
-    this.closer.computeLineDistances();
+    if (this.min.y > 0 && this.min.y < 0.08) this.min.y = -0.005;
   }
 
-  /** What the loop encloses, as seen from the eye. */
-  private enclosed(points: Vector3[]): Selectable[] {
-    const cam = this.ctx.camera;
-    cam.updateMatrixWorld(true);
-    const project = (w: Vector3): Vector2 | null => {
-      const l = cam.worldToLocal(this.tmp.copy(w));
-      if (l.z > -0.01) return null;
-      return new Vector2(l.x / -l.z, l.y / -l.z);
-    };
-    const poly = points.map(project).filter((v): v is Vector2 => v != null);
+  /** Show the box, lined up with the desk. */
+  private layoutBox(): void {
+    this.boxBounds();
+    const desk = this.ctx.desk;
+    desk.updateMatrixWorld(true);
+    const center = desk.localToWorld(this.tmp.copy(this.min).add(this.max).multiplyScalar(0.5));
+    const q = desk.getWorldQuaternion(this.q);
+    const scale = desk.getWorldScale(this.tmp2);
+    for (const m of [this.box, this.boxEdges]) {
+      m.position.copy(center);
+      m.quaternion.copy(q);
+      m.scale.set((this.max.x - this.min.x) * scale.x, (this.max.y - this.min.y) * scale.y, (this.max.z - this.min.z) * scale.z);
+    }
+  }
+
+  /** What the box contains (by centre). */
+  private enclosed(): Selectable[] {
     const caught: Selectable[] = [];
-    if (poly.length < 3) return caught;
     for (const item of this.sources.flatMap((s) => s.items())) {
       item.bounds(this.tmp2);
-      const c = project(this.tmp2);
-      if (c && inside(c, poly)) caught.push(item);
+      const p = this.toDesk(this.tmp2, this.tmp);
+      if (p.x >= this.min.x && p.x <= this.max.x && p.y >= this.min.y && p.y <= this.max.y && p.z >= this.min.z && p.z <= this.max.z) caught.push(item);
     }
     return caught;
   }
@@ -310,31 +309,30 @@ export class Selection {
       }
       return;
     }
-    const { hand, via, points } = this.lasso;
+    const { hand, via } = this.lasso;
     const held = via === 'pinch' ? hand.pinching : hand.grabbing;
     if (held && hand.tracked) {
-      const p = via === 'pinch' ? hand.pinchPoint : hand.grabPoint;
-      if (points.length < MAX_LASSO_POINTS && points[points.length - 1].distanceTo(p) > 0.005) {
-        this.addLassoPoint(p);
-        // Live preview: what the loop would catch if you let go now lights up.
-        if (points.length >= 6 && points.length % 2 === 0) {
-          const before = this.items.length;
-          this.setItems(this.enclosed(points));
-          if (this.items.length > before) Sfx.blip(1100, hand.isMouse ? undefined : p);
-        }
+      this.toDesk(via === 'pinch' ? hand.pinchPoint : hand.grabPoint, this.lasso.b);
+      this.layoutBox();
+      // Live preview: what the box would select if you let go now lights up.
+      const before = this.items.length;
+      const caught = this.enclosed();
+      if (caught.length !== before || caught.some((c) => !this.items.includes(c))) {
+        this.setItems(caught);
+        if (caught.length > before) Sfx.blip(1100, hand.isMouse ? undefined : hand.grabPoint);
       }
       return;
     }
-    // Released: select what the loop encloses, as seen from the eye.
-    this.beads.visible = this.links.visible = this.closer.visible = false;
+    // Released: select what the box holds.
+    this.box.visible = this.boxEdges.visible = false;
+    const { a, b } = this.lasso;
     this.lasso = null;
-    if (points.length < 6) {
+    if (a.distanceTo(b) < 0.02) {
       this.setItems([]);
       return;
     }
-    const caught = this.enclosed(points);
+    const caught = this.items;
     this.lastCaught = caught.length;
-    this.setItems(caught);
     if (caught.length) Sfx.success(hand.isMouse ? undefined : hand.pinchPoint);
     else Sfx.error(hand.isMouse ? undefined : hand.pinchPoint);
   }

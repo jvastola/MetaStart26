@@ -15,7 +15,7 @@ division.
 | 1 | **Desk Focus** | Productivity | A daily planner on your real desk, all within reach: grab cards off a desk planner, twist a timer, drop them in Done, grow a streak plant. A glance display on the wall shows the timer and progress. |
 | 2 | **Conjure** | Productivity / creative (Agentic) | Say or type what you want and it appears on the pedestal; the previous one steps aside to a free shelf spot and nothing else moves. Icon buttons: idea, speak, type, another version, AI on/off, clear. Instant offline sketch, optionally upgraded by Meshy or Tripo. |
 | 3 | **Shot Board** | Productivity / creative | Storyboard a scene on your desk. Frame shots with both hands like a director, anywhere in the lab; they collect on the storyboard as numbered, framed 3D cards on an arc, with play and remove-last buttons on a ledge below. |
-| 4 | **Clay** | Productivity / creative | Sculpt with your bare fingertips on a turntable. Tools are round icon buttons in an arc on the desk (sculpt, smooth, inflate, mirror, auto spin, colour, undo, reset, print, clear prints, export); sliders for size (0.5x to 5x) and brush size, or grab the turntable base and raise or lower your hand to resize. **Print copy** builds a solid copy you can pick up; the pin in front of a print keeps it in place, safe from Clear prints, and still there next session. |
+| 4 | **Clay** | Productivity / creative | Sculpt with your bare fingertips on a turntable. Tools are round icon buttons in an arc on the desk (sculpt, smooth, inflate, mirror, auto spin, colour, undo, reset, print, clear prints, export); sliders for size (0.5x to 5x) and brush size, or grab the turntable base and raise or lower your hand to resize. **Print copy** builds a solid copy you can pick up; the pin in front of a print moves it onto the desk, where it stays in every app and next session. |
 | 5 | **Sketch** | Productivity / creative | Pinch to draw in the air with either hand or both; grab a stroke to move it, both hands to scale. Loop around strokes to select several and move, scale, duplicate, paint or delete them together. Icon buttons for colour, brush size, erase, select, undo, clear. |
 | 6 | **Desk Links** | Gaming (reference) | Fingertip mini golf on your desk, kept for comparing hand mechanics. |
 | 7 | **Studio** | Productivity / creative | A small desk OS. A dock of icons opens tools as windows (Draw, Conjure, Clay, Storyboard), several at once. Each window's bar moves it and has **pin**, **focus** and **hide**: unpinned windows fold their controls away until you reach toward them, and focus gives one tool the whole desk. Select across tools: strokes, creations and prints together. |
@@ -71,7 +71,7 @@ there. AI generation needs the `api/gen3d.ts` proxy on Vercel.
       presses, twists and slides;
    3. **grab (thumb + middle)**: grab an orb and carry it into a ring. Grab
       picks things up;
-   4. **select**: hold a grab in empty air and draw a loop around three cubes;
+   4. **select**: hold a grab in empty air and stretch a box over three cubes;
    5. turn your left palm toward you to open the menu;
    6. press the **Home** button on the desk's front-left corner.
 4. The hub opens. The first time you enter each prototype, a **How to** card
@@ -103,17 +103,29 @@ front of you. Up close, poking and pinching stay in charge.
 **Buttons are icons.** Controls are round buttons on the desk with an icon on
 top; their name appears only while a hand, the cursor or a ray is on them.
 
-**Selecting several things.** Grab (thumb + middle) on empty air and keep
-holding: your hand draws a loop. A grab *on* something still picks it up
-straight away, so the same gesture means "take this" on a thing and "select"
-in the air. (The **Select** tool in the drawing tools lets a normal pinch draw
-the loop instead.) The loop is a glowing tube in the air with a
-dashed line showing where it will close, and things light up while you draw
-as soon as the loop surrounds them. Whatever falls inside the loop *as you see
-it* is selected, near or far. Selected things get a ring; a small row of buttons
-floats above them (duplicate, paint with the brush colour, delete, deselect).
-Grab any of them to move all of them, use two hands to scale them, drop them
-on the bin to delete them, or tap a grab on empty air to deselect.
+**Selecting several things: a box.** Grab (thumb + middle) on empty air and
+keep holding: a see-through box stretches from where you started to your hand,
+lined up with the desk. Everything inside it lights up as you go; let go to
+select it. A grab *on* something still picks it up straight away, so the same
+gesture means "take this" on a thing and "select" in the air. A flat box
+dragged along the desk still reaches things resting on it. (The **Select**
+tool lets a normal pinch stretch the box instead; with the mouse, right-drag.)
+Selected things get a ring; a row of buttons floats above them (duplicate,
+paint with the brush colour, delete, deselect). Grab any of them to move all
+of them, use two hands to scale them, drop them on the bin to delete them, or
+tap a grab on empty air to deselect.
+
+**Things that stay on the desk.** Pinned clay prints and photo prints live on
+the desk itself, not in an app: they show everywhere, Home included, and are
+saved for next session.
+- **Photo prints:** every shot you frame with both hands pops out a small
+  photo print where you framed it. Storyboard cards can also be pulled off the
+  board to make one. Grab a photo to move it.
+- **Pin:** the pin on a clay print moves it onto the desk, locked in place. The
+  pin on a desk object locks or unlocks it; unlocked, grab it to move it or
+  drop it on the bin.
+- **Storyboard cards:** grab one and drop it on another card's place to
+  reorder the story.
 
 | Gesture | Does |
 |---|---|
@@ -123,7 +135,7 @@ on the bin to delete them, or tap a grab on empty air to deselect.
 | Drop a held object on the bin (front-right corner of the desk) | Delete it: strokes, creations, Clay prints. Undo in Sketch brings strokes back |
 | Sketch **Erase**, then pinch across strokes | Erase them (Undo restores) |
 | Pinch or grab a Studio window's handle bar (or ray-pinch it from afar) | Move the window. Its round buttons pin, focus or hide it |
-| Grab (thumb + middle) on empty air and keep holding while you draw a loop (or use the Select tool with a pinch) | Select what the loop surrounds; grab to move all, two hands to scale. A quick grab on empty air deselects |
+| Grab (thumb + middle) on empty air and keep holding while you stretch a box (or use the Select tool with a pinch) | Select what the box holds; grab to move all, two hands to scale. A quick grab on empty air deselects |
 | Pinch both hands at the same moment, close together, then pull apart | Frame a camera shot, in any app (Sketch included); let go to capture it to the album. Pinches that start at different moments draw or grab as usual |
 | Pinch a dial or rim and move around it | Twist it (timer, turntable) |
 | Pinch or grab the bar on the front edge of the desk mat | Move the whole workspace; turn your wrist to turn it. It stays there next time |
@@ -252,7 +264,8 @@ src/protos/studio.ts     Studio desk OS: dock, windows, gesture routing between 
 src/core/window.ts       desk window: tray, handle bar, pin / focus / hide, folding
 src/core/icon-button.ts  round icon buttons (poke, pinch, click, ray); icons.ts draws them
 src/core/rays.ts         far rays that show only on usable targets out of reach
-src/core/selection.ts    3D loop select with live preview, group move/scale, selection menu
+src/core/selection.ts    box select with live preview, group move/scale, selection menu
+src/core/desk-objects.ts things on the desk in every app: pinned prints, photo prints
 src/core/trash.ts        the desk bin
 src/core/storyboard.ts   storyboard: framed 3D shot cards, ledge buttons, animatic player
 src/core/grab.ts         hand-rotation hold used by every pickable object
@@ -281,10 +294,13 @@ For the automated browser tests, `window.lab` exposes `go(id)`, `state()`,
   gestures going to the right tool), and Studio's arrangement of
   strokes, creations and two-hand shots;
 - icon buttons by poke and by click; far rays (shown only on far targets,
-  pinch to press, drag a window bar from afar); loop select with the tool,
-  with a held grab on empty air and with the mouse (right-drag); moving, two-hand scaling,
+  pinch to press, drag a window bar from afar); box select with the tool,
+  with a held grab on empty air and with the mouse (right-drag); moving,
+  two-hand scaling,
   duplicating, deleting and binning a selection; windows folding when no
-  hand is near, pinning, hiding, focus and restore;
+  hand is near, pinning, hiding, focus and restore; photo prints from the
+  camera gesture and from storyboard cards, reordering cards, pinned prints
+  showing in every app and surviving a reload;
 - auto-placing the desk on the emulated room's labelled table;
 - pinch-to-place fallback;
 - carrying a card to the focus pad;
@@ -302,7 +318,7 @@ The 53 unit tests, typecheck and production build pass.
 - Web Speech API availability in the Quest browser (every voice path has a
   pinch fallback);
 - the feel of the palm threshold, the far-ray aim (shoulder to palm), and
-  how long an air grab is held before it starts a loop (0.25 s);
+  how long an air grab is held before it starts a box (0.25 s);
 - how reliably real hand tracking tells a thumb + middle grab from a
   thumb + index pinch (thresholds in `src/core/hands.ts`);
 - frame rate;

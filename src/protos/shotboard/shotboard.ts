@@ -156,7 +156,7 @@ export class ShotBoardPrototype implements Prototype {
   }
 
   holding(): boolean {
-    return this.drag != null;
+    return this.drag != null || this.board.dragging;
   }
 
   update(dt: number): void {
@@ -279,6 +279,8 @@ export class ShotBoardPrototype implements Prototype {
 
   debugActions = {
     press: (id: string) => this.panel.press(id),
+    cardWorld: (i: number) => this.board.cardWorld(i),
+    shotIds: () => this.ctx.album.shots.map((s) => s.id),
     propWorld: (name: string) => {
       const prop = this.props.find((p) => p.name === name);
       if (!prop) return null;

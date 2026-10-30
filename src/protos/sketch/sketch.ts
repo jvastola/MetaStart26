@@ -279,7 +279,7 @@ export class SketchPrototype implements Prototype {
   } | null = null;
   private history: HistoryEntry[] = [];
   private erasing = false;
-  /** Select tool on: a pinch draws a selection loop instead of a stroke. */
+  /** Select tool on: a pinch stretches a selection box instead of drawing. */
   selecting = false;
   private erased = 0;
   private moves = 0;
@@ -316,7 +316,7 @@ export class SketchPrototype implements Prototype {
       ['color', 'colour', 'Colour'],
       ['size', 'size', 'Brush size'],
       ['erase', 'erase', 'Erase'],
-      ['select', 'select', 'Select (loop around things)'],
+      ['select', 'select', 'Select (pinch and stretch a box)'],
       ['undo', 'undo', 'Undo'],
       ['clear', 'trash', 'Clear all'],
     ];
