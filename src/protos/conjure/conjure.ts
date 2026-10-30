@@ -6,8 +6,13 @@
  * 2. An instant offline sketch appears on the pedestal (kit.ts).
  * 3. If an AI provider is configured, Meshy or Tripo generates a real model
  *    in the background via our proxy and replaces the sketch when ready.
- * 4. Pinch to pick creations up and place them anywhere; pinch with both
- *    hands to scale and turn. Older creations move to the shelf.
+ * 4. Grab creations to place them anywhere; grab with both hands to scale
+ *    and turn. A new creation takes the pedestal and only the previous one
+ *    steps aside to a free shelf spot: nothing else moves. Things you placed
+ *    by hand stay where you put them.
+ *
+ * Controls are round icon buttons in front of the pedestal; a small text-only
+ * display behind it shows the conversation.
  */
 
 import {
@@ -34,6 +39,7 @@ import { Voice } from '../../core/voice.js';
 import { parseIntent } from './intent.js';
 import { buildFromPrompt } from './kit.js';
 import type { Selectable, SelectionSource } from '../../core/selection.js';
+import { IconButton } from '../../core/icon-button.js';
 import { availableProviders, pollJob, type Provider, startJob } from './remote.js';
 
 type Source = 'sketch' | Provider;
@@ -51,6 +57,8 @@ interface Item {
   radius: number;
   /** Geometry and materials shared with another item (a duplicate): do not dispose. */
   shared?: boolean;
+  /** -1 = pedestal, 0.. = shelf spot, null = placed by hand. */
+  slot: number | null;
 }
 
 interface Hold {
@@ -76,8 +84,17 @@ const PROMPT_IDEAS = [
   'pine tree',
   'ringed planet',
 ];
-const SHELF_COMPACT = [new Vector3(-0.15, 0, 0.07), new Vector3(0.15, 0, 0.07), new Vector3(-0.165, 0, -0.06), new Vector3(0.165, 0, -0.06)];
-const MAX_ITEMS = 1 + SHELF.length;
+const SHELF_COMPACT = [new Vector3(-0.17, 0, 0.04), new Vector3(0.17, 0, 0.04), new Vector3(-0.17, 0, -0.09), new Vector3(0.17, 0, -0.09)];
+
+/** The round buttons in front of the pedestal, left to right. */
+const BUTTONS: [id: string, icon: string, label: string][] = [
+  ['idea', 'conjure', 'Surprise me'],
+  ['speak', 'speak', 'Speak'],
+  ['type', 'type', 'Type'],
+  ['again', 'redo', 'Another version'],
+  ['provider', 'ai', 'AI: off'],
+  ['clear', 'trash', 'Clear the desk'],
+];
 
 /** Lets Studio embed Conjure as a compact window. */
 export interface ConjureOptions {
@@ -91,7 +108,7 @@ export class ConjurePrototype implements Prototype {
   readonly tagline = 'Voice to 3D on your desk';
   readonly accent = ACCENTS.conjure;
   readonly howTo = [
-    'Press Speak and say what you want, or pinch an idea.',
+    'Press the mic and say what you want, or the star for an idea.',
     'Follow up: "make it blue", "bigger", "another one".',
     'Grab a creation (thumb + middle finger) to move it; use both hands to scale.',
     'Drop a creation in the bin on the desk corner to delete it.',
@@ -147,10 +164,11 @@ export class ConjurePrototype implements Prototype {
     moved: (items) => {
       for (const sel of items) {
         const item = this.itemOf(sel);
-        if (item) item.free = true;
+        if (item) this.unslot(item);
       }
     },
   };
+  private readonly buttons = new Map<string, IconButton>();
 
   constructor(private readonly options: ConjureOptions = {}) {
     this.shelf = options.layout === 'compact' ? SHELF_COMPACT : SHELF;
@@ -159,15 +177,44 @@ export class ConjurePrototype implements Prototype {
   /** Switch between the full layout and the compact (window) layout. */
   setLayout(mode: 'full' | 'compact'): void {
     this.shelf = mode === 'compact' ? SHELF_COMPACT : SHELF;
-    if (this.panel) {
-      this.panel.mesh.position.set(0, mode === 'compact' ? 0.11 : 0.09, mode === 'compact' ? -0.17 : -0.19);
-    }
+    if (this.panel) this.panel.mesh.position.set(0, 0.085, mode === 'compact' ? -0.17 : -0.19);
+    const z = mode === 'compact' ? 0.115 : 0.14;
+    BUTTONS.forEach(([id], i) => this.buttons.get(id)?.group.position.set((i - (BUTTONS.length - 1) / 2) * 0.04, 0.001, z));
     this.restack();
   }
 
-  /** The chat/prompt panel, so a host can fold it away. */
-  get panelMesh(): Object3D {
-    return this.panel.mesh;
+  /** Fold the controls away (Studio, when no hand is near) or bring them back. */
+  setControlsVisible(on: boolean): void {
+    this.panel.mesh.visible = on;
+    for (const b of this.buttons.values()) b.group.visible = on;
+  }
+
+  /** No longer on the pedestal or shelf: it stays where it is. */
+  private unslot(item: Item): void {
+    item.free = true;
+    item.slot = null;
+  }
+
+  /**
+   * Put an item on the pedestal. Whatever was there steps aside to the first
+   * free shelf spot; only when the shelf is full does its oldest item go.
+   */
+  private placeOnPedestal(item: Item): void {
+    const current = this.items.find((i) => i !== item && i.slot === -1);
+    if (current) {
+      const used = new Set(this.items.filter((i) => i.slot != null && i.slot >= 0).map((i) => i.slot));
+      let spot = this.shelf.findIndex((_, k) => !used.has(k));
+      if (spot < 0) {
+        const oldest = [...this.items].reverse().find((i) => i !== item && i.slot != null && i.slot >= 0)!;
+        spot = oldest.slot!;
+        this.burst.fire(this.tmp.copy(this.shelf[spot]).setY(0.05));
+        this.remove(oldest);
+      }
+      current.slot = spot;
+    }
+    item.slot = -1;
+    item.free = false;
+    this.restack();
   }
 
   private selectableFor(item: Item): Selectable {
@@ -183,7 +230,7 @@ export class ConjurePrototype implements Prototype {
         },
         // Selected things stay where they are instead of sliding back to the shelf.
         setLit: (on) => {
-          if (on) item.free = true;
+          if (on) this.unslot(item);
         },
       };
       this.selectables.set(item, sel);
@@ -212,7 +259,7 @@ export class ConjurePrototype implements Prototype {
     holder.quaternion.copy(item.holder.quaternion);
     holder.scale.copy(item.holder.scale);
     holder.userData.userScaled = true;
-    const copy: Item = { ...item, holder, content, free: true, spin: false, shared };
+    const copy: Item = { ...item, holder, content, free: true, spin: false, shared, slot: null };
     this.items.push(copy);
     this.deskRoot.add(holder);
     return copy;
@@ -230,12 +277,18 @@ export class ConjurePrototype implements Prototype {
     this.deskRoot.add(pedestal, rim, this.orbit);
     this.burst = new Burst(this.deskRoot, '#b48cff');
 
-    this.panel = new CanvasPanel({ width: 0.38, height: 0.16, columns: 4, buttonHeight: 0.032, accent: this.accent });
+    // A small text-only display for the conversation (no buttons, so rays ignore it).
+    this.panel = new CanvasPanel({ width: 0.32, height: 0.085, columns: 1, accent: this.accent });
     this.panel.mesh.name = 'ConjurePanel';
-    this.panel.mesh.position.set(0, this.options.layout === 'compact' ? 0.11 : 0.09, this.options.layout === 'compact' ? -0.17 : -0.19);
     this.panel.mesh.rotation.x = -0.3;
-    this.panel.onPress = (id) => this.onButton(id);
     this.deskRoot.add(this.panel.mesh);
+    for (const [id, icon, label] of BUTTONS) {
+      const b = new IconButton({ id: `conjure:${id}`, icon, label, accent: this.accent, radius: 0.016 });
+      b.onPress = () => this.onButton(id);
+      this.buttons.set(id, b);
+      this.deskRoot.add(b.group);
+    }
+    this.setLayout(this.options.layout ?? 'full');
 
     this.provider = availableProviders()[0] ?? 'sketch';
   }
@@ -245,7 +298,7 @@ export class ConjurePrototype implements Prototype {
     const available = availableProviders();
     if (this.provider !== 'sketch' && !available.includes(this.provider)) this.provider = available[0] ?? 'sketch';
     if (this.provider === 'sketch' && available.length > 0 && this.items.length === 0) this.provider = available[0];
-    this.status = this.items.length === 0 ? 'Say what you want, or pinch an idea below.' : this.status;
+    this.status = this.items.length === 0 ? 'Say or type what you want, or press the star for an idea.' : this.status;
     this.refresh();
   }
 
@@ -320,13 +373,12 @@ export class ConjurePrototype implements Prototype {
     const { object, recipe } = buildFromPrompt(prompt, variation);
     const holder = new Group();
     holder.add(object, blobShadow(0.13));
-    const item: Item = { holder, content: object, prompt, recipe, source: 'sketch', variation, spin: false, free: false, radius: 0.08 };
+    const item: Item = { holder, content: object, prompt, recipe, source: 'sketch', variation, spin: false, free: false, radius: 0.08, slot: null };
     this.items.unshift(item);
     this.deskRoot.add(holder);
     holder.position.copy(PEDESTAL);
     holder.scale.setScalar(0.01);
-    this.restack();
-    if (this.items.length > MAX_ITEMS) this.remove(this.items[this.items.length - 1]);
+    this.placeOnPedestal(item);
     this.burst.fire(this.tmp.copy(PEDESTAL).setY(0.06));
     Sfx.whoosh(this.deskRoot.localToWorld(this.tmp2.copy(PEDESTAL)));
     this.status = recipe === 'abstract' ? `Sketched "${prompt}" (abstract).` : `Sketched a ${recipe} for "${prompt}".`;
@@ -388,20 +440,17 @@ export class ConjurePrototype implements Prototype {
     this.restack();
   }
 
-  /** Newest on the pedestal, older ones onto the shelf (unless placed by hand). */
+  /** Each item heads for its own spot; nothing is reshuffled. */
   private restack(): void {
-    let slot = 0;
-    this.items.forEach((item, i) => {
-      if (item.free) return;
-      if (i === 0) item.holder.userData.target = PEDESTAL;
-      else item.holder.userData.target = this.shelf[Math.min(slot++, this.shelf.length - 1)];
-    });
+    for (const item of this.items) {
+      item.holder.userData.target = item.free || item.slot == null ? undefined : item.slot === -1 ? PEDESTAL : this.shelf[Math.min(item.slot, this.shelf.length - 1)];
+    }
   }
 
   // ------------------------------------------------------------ frame
 
   update(dt: number): void {
-    this.panel.update(this.ctx.pointers, dt);
+    this.panel.update([], dt);
     this.updateGestures();
     this.updateGrabs();
     const k = 1 - Math.exp(-dt * 8);
@@ -437,7 +486,7 @@ export class ConjurePrototype implements Prototype {
 
   private updateGrabs(): void {
     for (const hand of this.ctx.pointers) {
-      if (!hand.tracked || !hand.grabStarted || this.panel.contains(hand.holdPoint)) continue;
+      if (!hand.tracked || !hand.grabStarted) continue;
       const item = this.itemNear(hand);
       if (!item) continue;
       const other = this.holds.find((h) => h.item === item && h.hand !== hand);
@@ -498,11 +547,10 @@ export class ConjurePrototype implements Prototype {
     const p = hold.item.holder.position;
     if (Math.hypot(p.x - PEDESTAL.x, p.z - PEDESTAL.z) < 0.08 && p.y < 0.1) {
       // Back onto the pedestal: make it the current item.
-      hold.item.free = false;
       this.items = [hold.item, ...this.items.filter((i) => i !== hold.item)];
-      this.restack();
+      this.placeOnPedestal(hold.item);
     } else {
-      hold.item.free = true;
+      this.unslot(hold.item);
     }
     Sfx.place(hold.item.holder.getWorldPosition(this.tmp2));
   }
@@ -525,18 +573,13 @@ export class ConjurePrototype implements Prototype {
 
   // ------------------------------------------------------------ UI
 
-  private ideas(): string[] {
-    const out: string[] = [];
-    for (let i = 0; i < 4; i += 1) out.push(PROMPT_IDEAS[(this.ideaOffset + i) % PROMPT_IDEAS.length]);
-    return out;
-  }
-
   private onButton(id: string): void {
-    if (id.startsWith('idea')) {
-      const prompt = this.ideas()[Number(id.slice(4))];
-      this.ideaOffset = (this.ideaOffset + 4) % PROMPT_IDEAS.length;
-      this.run(prompt);
+    if (id === 'idea') {
+      const prompt = PROMPT_IDEAS[this.ideaOffset % PROMPT_IDEAS.length];
+      this.ideaOffset += 1;
+      this.ask(prompt);
     }
+    if (id === 'clear') this.ask('clear everything');
     if (id === 'speak') this.toggleVoice();
     if (id === 'again') this.run('another one');
     if (id === 'provider') this.cycleProvider();
@@ -586,29 +629,26 @@ export class ConjurePrototype implements Prototype {
     let body = this.status;
     if (this.voice.listening) body = `Listening: ${this.heard || '...'}`;
     else if (this.generating) body = `${this.status} ${Math.round(this.generating.progress * 100)}%`;
-    // Recent conversation, newest last, then the live status.
-    const log = this.chat.slice(-3).map((m) => `${m.who}: ${m.text}`);
-    const live = this.voice.listening || this.generating ? [body] : log.length ? [] : [body];
-    this.panel.setText(`Conjure - ${this.provider === 'sketch' ? 'offline sketch' : `AI: ${this.provider}`}`, '', [
-      ...log,
-      ...live,
-      ...(log.length ? [] : [this.ctx.immersive ? 'Type or say "make it blue", "bigger", "another one". Turn your wrist to turn what you hold.' : 'Drag creations around the desk.']),
-    ]);
-    const ideas = this.ideas();
-    this.panel.setButtons([
-      ...ideas.map((idea, i) => ({ id: `idea${i}`, label: idea })),
-      { id: 'speak', label: this.voice.listening ? 'Stop' : 'Speak', tone: this.voice.listening ? ('active' as const) : ('default' as const) },
-      { id: 'again', label: 'Another', disabled: this.items.length === 0 },
-      { id: 'provider', label: this.provider === 'sketch' ? 'AI: off' : `AI: ${this.provider}` },
-      { id: 'type', label: 'Type', tone: 'primary' as const },
-    ]);
+    // The last exchange, or the live status.
+    const log = this.chat.slice(-2).map((m) => `${m.who}: ${m.text}`);
+    const live = this.voice.listening || this.generating || log.length === 0 ? [body] : [];
+    this.panel.setText(`Conjure - ${this.provider === 'sketch' ? 'offline sketch' : `AI: ${this.provider}`}`, '', [...log, ...live]);
+    const speak = this.buttons.get('speak')!;
+    speak.active = this.voice.listening;
+    speak.label = this.voice.listening ? 'Stop listening' : 'Speak';
+    this.buttons.get('again')!.disabled = this.items.length === 0;
+    this.buttons.get('clear')!.disabled = this.items.length === 0;
+    const ai = this.buttons.get('provider')!;
+    ai.active = this.provider !== 'sketch';
+    ai.label = this.provider === 'sketch' ? 'AI: off (offline sketches)' : `AI: ${this.provider}`;
   }
+
 
   // ------------------------------------------------------------ tests
 
   debugState(): unknown {
     return {
-      items: this.items.map((i) => ({ prompt: i.prompt, recipe: i.recipe, source: i.source, free: i.free, scale: +i.holder.scale.x.toFixed(2), yaw: +i.holder.rotation.y.toFixed(2), pitch: +i.holder.rotation.x.toFixed(2), children: i.content.children.length })),
+      items: this.items.map((i) => ({ slot: i.slot, pos: i.holder.position.toArray().map((v) => +v.toFixed(3)), prompt: i.prompt, recipe: i.recipe, source: i.source, free: i.free, scale: +i.holder.scale.x.toFixed(2), yaw: +i.holder.rotation.y.toFixed(2), pitch: +i.holder.rotation.x.toFixed(2), children: i.content.children.length })),
       provider: this.provider,
       status: this.status,
       chat: this.chat.map((m) => `${m.who}: ${m.text}`),
@@ -618,7 +658,7 @@ export class ConjurePrototype implements Prototype {
 
   debugActions = {
     say: (text: string) => this.ask(text),
-    press: (id: string) => this.panel.press(id),
+    press: (id: string) => this.buttons.get(id)?.press(true),
     itemWorld: (index: number) => {
       const item = this.items[index];
       if (!item) return null;

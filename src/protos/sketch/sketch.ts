@@ -327,7 +327,8 @@ export class SketchPrototype implements Prototype {
       this.buttons.set(id, b);
       this.toolsRoot.add(b.group);
     });
-    const pose = this.options.tools ?? { position: [-0.26, 0, 0.15], rotation: [0, 0.25, 0] };
+    // Left of centre, clear of the Home and How-to buttons on the corner.
+    const pose = this.options.tools ?? { position: [-0.19, 0, 0.13], rotation: [0, 0.2, 0] };
     this.toolsRoot.position.set(...pose.position);
     this.toolsRoot.rotation.set(...pose.rotation, 'YXZ');
     this.deskRoot.add(this.toolsRoot);
@@ -335,7 +336,7 @@ export class SketchPrototype implements Prototype {
     // Colour wheel on the left of the desk, angled toward you.
     this.wheel = new ColorWheel(0.15, this.colorHex);
     // Wheel position is relative to the tool buttons.
-    const wheel = this.options.wheel ?? { position: [-0.08, 0.13, -0.15], rotation: [-0.2, 0.25, 0], visible: true };
+    const wheel = this.options.wheel ?? { position: [-0.14, 0.13, -0.15], rotation: [-0.2, 0.3, 0], visible: true };
     this.wheel.mesh.position.set(...wheel.position);
     this.wheel.mesh.rotation.set(...wheel.rotation, 'YXZ');
     this.wheel.mesh.visible = wheel.visible ?? true;
@@ -492,7 +493,13 @@ export class SketchPrototype implements Prototype {
   private selectableFor(stroke: Stroke): Selectable {
     let s = this.selectables.get(stroke);
     if (!s) {
-      s = { object: stroke.group, source: this.selectionSource, bounds: (c) => stroke.bounds(c), setLit: (on) => stroke.setLit(on) };
+      s = {
+        object: stroke.group,
+        source: this.selectionSource,
+        bounds: (c) => stroke.bounds(c),
+        distance: (w) => stroke.distanceTo(w) - stroke.worldRadius,
+        setLit: (on) => stroke.setLit(on),
+      };
       this.selectables.set(stroke, s);
     }
     return s;

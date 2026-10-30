@@ -76,6 +76,9 @@ export class LabSystem extends createSystem({
   private keyboard = new VirtualKeyboard();
   private deskGrab: { hand: HandState; pose: HeldPose } | null = null;
   private trashBin!: TrashBin;
+  /** Home and How-to buttons on the front-left corner of the desk, in every app. */
+  private homeButton!: IconButton;
+  private helpButton!: IconButton;
   private realWall = false;
   private readonly barScratch = new Vector3();
   private album = new Album();
@@ -140,6 +143,16 @@ export class LabSystem extends createSystem({
 
     this.trashBin = new TrashBin();
     this.desk.add(this.trashBin.group);
+    this.homeButton = new IconButton({ id: 'desk:home', icon: 'home', label: 'Home', accent: '#9fc7ff', radius: 0.017 });
+    this.homeButton.group.position.set(-0.345, 0.001, 0.2);
+    this.homeButton.onPress = () => this.go('hub');
+    this.helpButton = new IconButton({ id: 'desk:help', icon: 'help', label: 'How to use this app', accent: '#9fc7ff', radius: 0.017 });
+    this.helpButton.group.position.set(-0.3, 0.001, 0.2);
+    this.helpButton.onPress = () => {
+      if (this.active) this.showHowTo(this.active, true);
+    };
+    this.homeButton.group.visible = this.helpButton.group.visible = false;
+    this.desk.add(this.homeButton.group, this.helpButton.group);
 
     const system = this;
     this.ctx = {
@@ -276,6 +289,14 @@ export class LabSystem extends createSystem({
     this.setup = 'auto';
     this.setupTime = 0;
     this.showActive(false);
+  }
+
+  /** Home shows everywhere but Home itself; How-to only where there is one. */
+  private updateDeskButtons(): void {
+    const ready = this.setup === 'ready' && this.mat.mesh.visible;
+    const a = this.active;
+    this.homeButton.group.visible = ready && a != null && (a.homeButton?.() ?? true);
+    this.helpButton.group.visible = ready && a != null && a.howTo != null && a.howTo.length > 0;
   }
 
   private showActive(show: boolean): void {
@@ -555,6 +576,7 @@ export class LabSystem extends createSystem({
     if (caption) this.afterShot(caption);
     this.active?.update(dt);
     this.trashBin.update(dt);
+    this.updateDeskButtons();
   }
 
   /** Capture from code (Snap view, tests) with the same feedback as the gesture. */

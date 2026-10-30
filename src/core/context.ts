@@ -69,6 +69,8 @@ export interface Prototype {
   update(dt: number): void;
   /** True while the prototype owns the pinches (holding, drawing...): the host then skips the frame gesture. */
   holding?(): boolean;
+  /** Show the desk's Home button (default true; Home itself hides it, the tutorial shows it at the end). */
+  homeButton?(): boolean;
   /** Snapshot for automated tests. */
   debugState?(): unknown;
   /** Test helpers callable from the browser console. */

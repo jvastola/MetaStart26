@@ -15,7 +15,7 @@
  *     middle and shows its full controls; press focus again to go back.
  *
  * Strokes, creations and prints live on the desk, not in the windows. Loop
- * around any of them (Select tool, or a quick double pinch) to select them
+ * around any of them (hold a grab in empty air and move) to select them
  * together; grab to move, both hands to scale, the bin or menu to delete.
  *
  * Who gets a gesture: window bars, then the selection, then Clay, Conjure,
@@ -73,7 +73,7 @@ export class StudioPrototype implements Prototype {
   readonly howTo = [
     'Round buttons on the left open tools. Point at one to see its name.',
     'Window bars: pin keeps controls out, focus gives a tool the desk.',
-    'Double pinch and loop around things to select them; grab to move.',
+    'Hold a grab (thumb + middle) in empty air and loop around things to select.',
   ];
   readonly deskRoot = new Group();
   readonly wallRoot = new Group();
@@ -131,7 +131,7 @@ export class StudioPrototype implements Prototype {
       reach: { center: [0, 0.06, -0.03], radius: 0.22 },
     });
     conjure.content.add(this.conjure.deskRoot);
-    conjure.onExpand = (on) => (this.conjure.panelMesh.visible = on);
+    conjure.onExpand = (on) => this.conjure.setControlsVisible(on);
 
     const clay = this.addWindow({
       id: 'clay',

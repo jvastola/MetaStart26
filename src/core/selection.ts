@@ -1,16 +1,18 @@
 /**
  * Multi-select: loop around things, then act on all of them at once.
  *
- *   Loop     - with the Select tool on, or with a quick double pinch, pinch
- *              and draw a loop. Everything whose centre falls inside the loop
- *              as you see it is selected, near or far.
+ *   Loop     - grab (thumb + middle) in empty air and keep holding: your
+ *              hand draws a loop. (With the Select tool on, a pinch does the
+ *              same.) Everything whose centre falls inside the loop as you
+ *              see it is selected, near or far. A grab ON something still
+ *              picks that thing up straight away.
  *   Move     - grab (thumb + middle) any selected thing: the whole selection
  *              follows your hand and turns with your wrist.
  *   Scale    - grab the selection with both hands and pull apart / twist.
  *   Delete   - drop it on the desk bin, or press the bin button.
  *   Menu     - round buttons float above the selection: duplicate, paint
  *              with the brush colour, delete, deselect.
- *   Clear    - a quick pinch on empty space deselects.
+ *   Clear    - a quick grab or pinch on empty space deselects.
  *
  * Tools take part by registering a SelectionSource.
  */
@@ -40,6 +42,8 @@ export interface Selectable {
   readonly source: SelectionSource;
   /** World centre and radius of the thing. */
   bounds(center: Vector3): number;
+  /** Precise distance (m) from a world point to the thing's surface, if cheaper than bounds suggest. */
+  distance?(world: Vector3): number;
   setLit?(on: boolean): void;
 }
 
@@ -53,8 +57,12 @@ export interface SelectionSource {
 }
 
 const MAX_LASSO_POINTS = 400;
-const DOUBLE_PINCH = 0.4;
 const TAP_TIME = 0.25;
+/** An air grab becomes a loop after this long, or this far. */
+const AIR_HOLD = 0.25;
+const AIR_MOVE = 0.02;
+/** A grab this close to something is a pick-up, not a loop. */
+const NEAR_THING = 0.03;
 const UP = new Vector3(0, 1, 0);
 
 interface GroupHold {
@@ -78,12 +86,13 @@ export class Selection {
   /** Set by tests: how many things the last loop caught. */
   lastCaught = 0;
   private readonly sources: SelectionSource[] = [];
-  private lasso: { hand: HandState; points: Vector3[]; line: Line } | null = null;
+  private lasso: { hand: HandState; via: 'pinch' | 'grab'; points: Vector3[]; line: Line } | null = null;
+  /** Grabs that began on empty air: a loop once held or moved, a deselect if just tapped. */
+  private readonly air = new Map<HandState, { time: number; at: Vector3 }>();
   private hold: GroupHold | null = null;
   private readonly halos = new Map<Selectable, Mesh>();
   private readonly menu = new Group();
   private readonly buttons: IconButton[] = [];
-  private readonly lastPinchEnd = new Map<HandState, { time: number; at: Vector3 }>();
   private readonly pinchStart = new Map<HandState, { time: number; at: Vector3 }>();
   private time = 0;
   private readonly tmp = new Vector3();
@@ -141,11 +150,11 @@ export class Selection {
 
   /** True if this hand is drawing a loop or holding the selection. */
   owns(hand: HandState): boolean {
-    return this.lasso?.hand === hand || (this.hold?.hands.includes(hand) ?? false);
+    return this.lasso?.hand === hand || this.air.has(hand) || (this.hold?.hands.includes(hand) ?? false);
   }
 
   get busy(): boolean {
-    return this.lasso != null || this.hold != null;
+    return this.lasso != null || this.hold != null || this.air.size > 0;
   }
 
   /**
@@ -168,40 +177,74 @@ export class Selection {
         const tap = start != null && this.time - start.time < TAP_TIME && start.at.distanceTo(hand.indexTip) < 0.02;
         // A quick tap on nothing clears the selection.
         if (tap && this.active && !this.lasso && !this.hitAny(hand.pinchPoint)) this.clear();
-        // Only a tap can be the first half of a double pinch, so quick hatching strokes never start a loop.
-        if (tap) this.lastPinchEnd.set(hand, { time: this.time, at: hand.indexTip.clone() });
-        else this.lastPinchEnd.delete(hand);
       }
     }
 
-    this.updateLasso();
     this.updateHold();
+    this.updateAir();
+    this.updateLasso();
     this.layoutMenu();
   }
 
   // ------------------------------------------------------------ lasso
 
+  private beginLasso(hand: HandState, via: 'pinch' | 'grab', from: Vector3): void {
+    const line = new Line(new BufferGeometry(), this.lassoMat);
+    line.renderOrder = 40;
+    line.frustumCulled = false;
+    this.group.add(line);
+    this.lasso = { hand, via, points: [from.clone()], line };
+    Sfx.blip(880, hand.isMouse ? undefined : from);
+  }
+
+  /** True if a world point is on or next to anything selectable. */
+  private nearAnything(world: Vector3): boolean {
+    for (const item of this.sources.flatMap((s) => s.items())) {
+      const r = item.bounds(this.tmp);
+      const d = item.distance ? item.distance(world) : this.tmp.distanceTo(world) - r;
+      if (d < NEAR_THING) return true;
+    }
+    return false;
+  }
+
+  /** A grab that starts on nothing: hold or move it to draw a loop; tap it to deselect. */
+  private updateAir(): void {
+    for (const hand of this.ctx.pointers) {
+      if (!hand.tracked) continue;
+      // A mouse left-click is a pinch and a grab at once: that one draws, it does not loop.
+      if (hand.grabStarted && !hand.pinchStarted && !this.owns(hand) && !this.lasso && !this.nearAnything(hand.holdPoint)) {
+        this.air.set(hand, { time: this.time, at: hand.grabPoint.clone() });
+        hand.clearEdges();
+      }
+    }
+    for (const [hand, a] of this.air) {
+      if (!hand.grabbing || !hand.tracked) {
+        this.air.delete(hand);
+        if (this.active) this.clear();
+        continue;
+      }
+      if (this.time - a.time > AIR_HOLD || hand.grabPoint.distanceTo(a.at) > AIR_MOVE) {
+        this.air.delete(hand);
+        if (!this.lasso) this.beginLasso(hand, 'grab', a.at);
+      }
+    }
+  }
+
   private updateLasso(): void {
     if (!this.lasso) {
+      if (!this.armed()) return;
       for (const hand of this.ctx.pointers) {
         if (!hand.tracked || !hand.pinchStarted) continue;
-        const last = this.lastPinchEnd.get(hand);
-        const double = last != null && this.time - last.time < DOUBLE_PINCH && last.at.distanceTo(hand.indexTip) < 0.05;
-        if (!this.armed() && !double) continue;
-        const line = new Line(new BufferGeometry(), this.lassoMat);
-        line.renderOrder = 40;
-        line.frustumCulled = false;
-        this.group.add(line);
-        this.lasso = { hand, points: [hand.pinchPoint.clone()], line };
+        this.beginLasso(hand, 'pinch', hand.pinchPoint);
         hand.clearEdges();
-        Sfx.blip(880, hand.isMouse ? undefined : hand.pinchPoint);
         return;
       }
       return;
     }
-    const { hand, points, line } = this.lasso;
-    if (hand.pinching && hand.tracked) {
-      const p = hand.pinchPoint;
+    const { hand, via, points, line } = this.lasso;
+    const held = via === 'pinch' ? hand.pinching : hand.grabbing;
+    if (held && hand.tracked) {
+      const p = via === 'pinch' ? hand.pinchPoint : hand.grabPoint;
       if (points.length < MAX_LASSO_POINTS && points[points.length - 1].distanceTo(p) > 0.004) {
         points.push(p.clone());
         line.geometry.dispose();
@@ -367,7 +410,10 @@ export class Selection {
       this.group.add(halo);
       this.halos.set(item, halo);
     }
-    if (items.length === 0) this.hold = null;
+    if (items.length === 0) {
+      this.hold = null;
+      this.menu.visible = false;
+    }
   }
 
   clear(): void {
@@ -436,8 +482,8 @@ export class Selection {
     }
   }
 
-  debug(): { count: number; holding: number; lasso: boolean; caught: number } {
-    return { count: this.items.length, holding: this.hold?.hands.length ?? 0, lasso: this.lasso != null, caught: this.lastCaught };
+  debug(): { count: number; holding: number; lasso: boolean; caught: number; airGrab: number } {
+    return { count: this.items.length, holding: this.hold?.hands.length ?? 0, lasso: this.lasso != null, caught: this.lastCaught, airGrab: this.air.size };
   }
 }
 

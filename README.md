@@ -13,7 +13,7 @@ division.
 | # | Prototype | Track | One-line pitch |
 |---|---|---|---|
 | 1 | **Desk Focus** | Productivity | A daily planner on your real desk, all within reach: grab cards off a desk planner, twist a timer, drop them in Done, grow a streak plant. A glance display on the wall shows the timer and progress. |
-| 2 | **Conjure** | Productivity / creative (Agentic) | Say or type what you want and it appears on your desk; a chat log keeps the back-and-forth. Instant offline sketch, optionally upgraded by Meshy or Tripo. |
+| 2 | **Conjure** | Productivity / creative (Agentic) | Say or type what you want and it appears on the pedestal; the previous one steps aside to a free shelf spot and nothing else moves. Icon buttons: idea, speak, type, another version, AI on/off, clear. Instant offline sketch, optionally upgraded by Meshy or Tripo. |
 | 3 | **Shot Board** | Productivity / creative | Storyboard a scene on your desk. Frame shots with both hands like a director, anywhere in the lab; they collect on the board. |
 | 4 | **Clay** | Productivity / creative | Sculpt with your bare fingertips on a turntable. Tools are round icon buttons in an arc on the desk (sculpt, smooth, inflate, mirror, auto spin, colour, undo, reset, print, clear prints, export); sliders for size (0.5x to 5x) and brush size. **Print copy** builds a solid copy you can pick up. |
 | 5 | **Sketch** | Productivity / creative | Pinch to draw in the air with either hand or both; grab a stroke to move it, both hands to scale. Loop around strokes to select several and move, scale, duplicate, paint or delete them together. Icon buttons for colour, brush size, erase, select, undo, clear. |
@@ -64,12 +64,16 @@ there. AI generation needs the `api/gen3d.ts` proxy on Vercel.
    pinching the bar on its front edge.
    - If the browser's own enter prompt doesn't appear (Quest sometimes skips
      it after a reload), use the **Enter mixed reality** button on the page.
-3. A **40-second tutorial** teaches the four moves by doing them. A ghost
-   fingertip demonstrates each one:
+3. A **one-minute tutorial** teaches the moves by doing them. Each card shows
+   a small hand with the fingers to use, and a ghost fingertip acts it out:
    1. poke a glowing button;
-   2. grab an orb with thumb + middle finger and carry it into a ring;
-   3. pinch a dial's rim and twist it;
-   4. turn your left palm toward you to open the menu.
+   2. **pinch (thumb + index)**: pinch a dial's rim and twist it. Pinch draws,
+      presses, twists and slides;
+   3. **grab (thumb + middle)**: grab an orb and carry it into a ring. Grab
+      picks things up;
+   4. **select**: hold a grab in empty air and draw a loop around three cubes;
+   5. turn your left palm toward you to open the menu;
+   6. press the **Home** button on the desk's front-left corner.
 4. The hub opens. The first time you enter each prototype, a **How to** card
    explains it in three lines. Bring it back any time with palm up, then
    **How to**.
@@ -92,18 +96,22 @@ fills with the app's colour for a pinch and gold for a grab.
 from your shoulder through your palm. It stays hidden until it lands on
 something usable beyond arm's reach (a button, a panel, a window bar). Then
 pinch to press, or pinch and hold a window bar to drag the window from where
-you are. Up close, poking and pinching stay in charge.
+you are. Things within arm's reach (measured from your shoulder) never get a
+ray, so your hand resting over the desk does not light up the controls in
+front of you. Up close, poking and pinching stay in charge.
 
 **Buttons are icons.** Controls are round buttons on the desk with an icon on
 top; their name appears only while a hand, the cursor or a ray is on them.
 
-**Selecting several things.** Loop around them: turn on **Select** in the
-drawing tools, or pinch twice quickly and draw a loop. Whatever falls inside
-the loop *as you see it* is selected, near or far. Selected things get a
-ring; a small row of buttons floats above them (duplicate, paint with the
-brush colour, delete, deselect). Grab any of them to move all of them, use
-two hands to scale them, drop them on the bin to delete them, or tap a
-pinch on empty space to deselect.
+**Selecting several things.** Grab (thumb + middle) on empty air and keep
+holding: your hand draws a loop. A grab *on* something still picks it up
+straight away, so the same gesture means "take this" on a thing and "select"
+in the air. (The **Select** tool in the drawing tools lets a normal pinch draw
+the loop instead.) Whatever falls inside the loop *as you see it* is
+selected, near or far. Selected things get a ring; a small row of buttons
+floats above them (duplicate, paint with the brush colour, delete, deselect).
+Grab any of them to move all of them, use two hands to scale them, drop them
+on the bin to delete them, or tap a grab on empty air to deselect.
 
 | Gesture | Does |
 |---|---|
@@ -113,13 +121,14 @@ pinch on empty space to deselect.
 | Drop a held object on the bin (front-right corner of the desk) | Delete it: strokes, creations, Clay prints. Undo in Sketch brings strokes back |
 | Sketch **Erase**, then pinch across strokes | Erase them (Undo restores) |
 | Pinch or grab a Studio window's handle bar (or ray-pinch it from afar) | Move the window. Its round buttons pin, focus or hide it |
-| Select tool, or a quick double pinch, then draw a loop | Select what the loop surrounds; grab to move all, two hands to scale |
+| Grab (thumb + middle) on empty air and keep holding while you draw a loop (or use the Select tool with a pinch) | Select what the loop surrounds; grab to move all, two hands to scale. A quick grab on empty air deselects |
 | Pinch both hands at the same moment, close together, then pull apart | Frame a camera shot, in any app (Sketch included); let go to capture it to the album. Pinches that start at different moments draw or grab as usual |
 | Pinch a dial or rim and move around it | Twist it (timer, turntable) |
 | Pinch or grab the bar on the front edge of the desk mat | Move the whole workspace; turn your wrist to turn it. It stays there next time |
 | Pinch (or touch) the colour wheel and drag | Ring = hue, inner square = saturation and brightness; recent colours underneath. The **Colour** button shows or hides it (Sketch, Clay) |
 | Pinch the knob of a desk slider and slide | Change a value: Clay's sculpture size (0.5x to 5x) and brush size |
 | Poke keys on the desk keyboard | Type; **Mic** dictates. Opens from Desk Focus **New card** and Conjure **Type** |
+| Poke the house or **?** button on the desk's front-left corner | Home, or this app's how-to card (in every app) |
 | Turn your left palm toward your face | Hand menu: Home, How to, Sound on/off, Passthrough / Virtual room |
 | Thumb microgestures (thumb tap, swipe on the index finger) | Shortcuts: start/pause, next card, undo, bigger/smaller, rotate |
 
@@ -270,7 +279,7 @@ For the automated browser tests, `window.lab` exposes `go(id)`, `state()`,
   strokes, creations and two-hand shots;
 - icon buttons by poke and by click; far rays (shown only on far targets,
   pinch to press, drag a window bar from afar); loop select with the tool,
-  with a double pinch and with the mouse; moving, two-hand scaling,
+  with a held grab on empty air and with the mouse (right-drag); moving, two-hand scaling,
   duplicating, deleting and binning a selection; windows folding when no
   hand is near, pinning, hiding, focus and restore;
 - auto-placing the desk on the emulated room's labelled table;
@@ -290,7 +299,7 @@ The 53 unit tests, typecheck and production build pass.
 - Web Speech API availability in the Quest browser (every voice path has a
   pinch fallback);
 - the feel of the palm threshold, the far-ray aim (shoulder to palm), and
-  the double-pinch timing;
+  how long an air grab is held before it starts a loop (0.25 s);
 - how reliably real hand tracking tells a thumb + middle grab from a
   thumb + index pinch (thresholds in `src/core/hands.ts`);
 - frame rate;

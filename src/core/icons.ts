@@ -229,6 +229,29 @@ export const ICONS: Record<string, Draw> = {
     line(c, [[0.35, 0.35], [0.65, 0.65]], s);
     line(c, [[0.65, 0.35], [0.35, 0.65]], s);
   },
+  ai: (c, s) => {
+    c.font = `800 ${s * 0.42}px system-ui, sans-serif`;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText('AI', s * 0.5, s * 0.54);
+  },
+  home: (c, s) => {
+    line(c, [[0.18, 0.5], [0.5, 0.2], [0.82, 0.5]], s);
+    line(c, [[0.28, 0.42], [0.28, 0.8], [0.72, 0.8], [0.72, 0.42]], s);
+    c.fillRect(0.43 * s, 0.58 * s, 0.14 * s, 0.22 * s);
+  },
+  help: (c, s) => {
+    c.beginPath();
+    c.arc(0.5 * s, 0.36 * s, 0.15 * s, Math.PI * 1.05, Math.PI * 0.45);
+    c.stroke();
+    line(c, [[0.5, 0.52], [0.5, 0.62]], s);
+    circle(c, 0.5, 0.78, 0.05, s, true);
+  },
+  hand: (c, s) => {
+    circle(c, 0.5, 0.62, 0.2, s);
+    for (const x of [0.36, 0.47, 0.58, 0.68]) line(c, [[x, 0.45], [x, 0.18]], s);
+    line(c, [[0.32, 0.62], [0.16, 0.48]], s);
+  },
   plus: (c, s) => {
     line(c, [[0.5, 0.24], [0.5, 0.76]], s);
     line(c, [[0.24, 0.5], [0.76, 0.5]], s);

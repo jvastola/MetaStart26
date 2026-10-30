@@ -316,6 +316,10 @@ export class HubPrototype implements Prototype {
 
   exit(): void {}
 
+  homeButton(): boolean {
+    return false;
+  }
+
   update(dt: number): void {
     this.header.update([], dt);
     this.cooldown = Math.max(0, this.cooldown - dt);

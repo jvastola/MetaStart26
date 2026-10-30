@@ -1,11 +1,15 @@
 /**
- * First-use tutorial: teaches the four hand moves every prototype uses by
- * doing them, not by reading about them.
+ * First-use tutorial: teaches the hand moves every prototype uses by doing
+ * them, not by reading about them. Each card shows which fingers to use.
  *
- *   1. Poke   - press a glowing button with your index fingertip.
- *   2. Carry  - grab an orb (thumb + middle finger), carry it into the ring, let go.
- *   3. Twist  - pinch the dial's rim and turn it a quarter turn.
- *   4. Menu   - turn your left palm toward your face.
+ *   1. Poke    - press a glowing button with your index fingertip.
+ *   2. Pinch   - thumb + INDEX: pinch the dial's rim and turn it. (Draw,
+ *                press, twist, slide.)
+ *   3. Grab    - thumb + MIDDLE: grab the orb, carry it into the ring. (Pick
+ *                things up.)
+ *   4. Select  - hold a grab in empty air and draw a loop around the cubes.
+ *   5. Menu    - turn your left palm toward your face.
+ *   6. Home    - press the Home button on the desk's front-left corner.
  *
  * A translucent "ghost fingertip" demonstrates each motion on a loop, the
  * target pulses, and big step dots show progress. Every step has a mouse
@@ -14,6 +18,7 @@
  */
 
 import {
+  BoxGeometry,
   CylinderGeometry,
   Group,
   Mesh,
@@ -24,15 +29,16 @@ import {
   TorusGeometry,
   Vector3,
 } from '@iwsdk/core';
-import { ACCENTS, blobShadow } from '../core/art.js';
+import { ACCENTS, blobShadow, GRAB_COLOR } from '../core/art.js';
 import { Burst } from '../core/burst.js';
 import { type LabContext, type Prototype, store } from '../core/context.js';
 import { grabDistance, type HandState, pointerDistance } from '../core/hands.js';
 import { CanvasPanel, THEME } from '../core/panel.js';
+import { type Selectable, Selection, type SelectionSource } from '../core/selection.js';
 import { Sfx } from '../core/sfx.js';
 
-type Step = 'poke' | 'carry' | 'twist' | 'menu' | 'done';
-const STEPS: Step[] = ['poke', 'carry', 'twist', 'menu'];
+type Step = 'poke' | 'twist' | 'carry' | 'select' | 'menu' | 'home';
+const STEPS: Step[] = ['poke', 'twist', 'carry', 'select', 'menu', 'home'];
 export const INTRO_DONE_KEY = 'lab-intro-done-v1';
 
 const BUTTON = new Vector3(0, 0, 0.03);
@@ -40,6 +46,9 @@ const ORB_HOME = new Vector3(-0.17, 0.035, 0.05);
 const RING = new Vector3(0.17, 0, 0.05);
 const DIAL = new Vector3(0, 0, 0.03);
 const TWIST_GOAL = Math.PI / 2;
+const CUBES = [new Vector3(-0.07, 0.015, 0.03), new Vector3(0, 0.015, 0.0), new Vector3(0.07, 0.015, 0.03)];
+/** Where the host's Home button sits (desk-local). */
+const HOME = new Vector3(-0.345, 0, 0.2);
 
 export class IntroPrototype implements Prototype {
   readonly id = 'intro';
@@ -67,17 +76,21 @@ export class IntroPrototype implements Prototype {
   private dialTurn = 0;
   private twist: { hand: HandState; last: number } | null = null;
   private ghost!: Mesh;
+  private readonly ghostMat = new MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.55, depthWrite: false });
+  private cubes: Mesh[] = [];
+  private selection!: Selection;
   private lastDrop: number[] = [];
   private pulse!: Mesh;
 
   private readonly tmp = new Vector3();
   private readonly tmp2 = new Vector3();
+  private cubeItems: Selectable[] = [];
 
   constructor(private readonly finish: () => void) {}
 
   init(ctx: LabContext): void {
     this.ctx = ctx;
-    this.panel = new CanvasPanel({ width: 0.42, height: 0.2, columns: 2, buttonHeight: 0.034, accent: this.accent });
+    this.panel = new CanvasPanel({ width: 0.44, height: 0.23, columns: 2, buttonHeight: 0.032, accent: this.accent });
     this.panel.mesh.name = 'IntroPanel';
     this.panel.mesh.position.set(0, 0.17, -0.15);
     this.panel.mesh.rotation.x = -0.15;
@@ -120,7 +133,33 @@ export class IntroPrototype implements Prototype {
     this.deskRoot.add(this.dial);
 
     // Hints: a ghost fingertip that acts out the move, and a pulsing ring.
-    this.ghost = new Mesh(new SphereGeometry(0.009, 16, 12), new MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.55, depthWrite: false }));
+    // 4. Three cubes to loop around.
+    const cubeMat = new MeshStandardMaterial({ color: '#c7a6ff', roughness: 0.4 });
+    for (const at of CUBES) {
+      const cube = new Mesh(new BoxGeometry(0.026, 0.026, 0.026), cubeMat);
+      cube.position.copy(at);
+      cube.rotation.y = at.x * 8;
+      cube.add(blobShadow(0.05));
+      this.cubes.push(cube);
+      this.deskRoot.add(cube);
+    }
+    this.selection = new Selection(ctx, GRAB_COLOR);
+    const source: SelectionSource = {
+      items: () => (this.step === 'select' ? this.cubeItems : []),
+      remove: () => {},
+    };
+    this.cubeItems = this.cubes.map((cube) => ({
+      object: cube,
+      source,
+      bounds: (c: Vector3) => {
+        cube.getWorldPosition(c);
+        return 0.02;
+      },
+    }));
+    this.selection.addSource(source);
+    this.deskRoot.add(this.selection.group);
+
+    this.ghost = new Mesh(new SphereGeometry(0.009, 16, 12), this.ghostMat);
     this.pulse = new Mesh(new RingGeometry(0.8, 1, 40), new MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.6, depthWrite: false }));
     this.pulse.rotation.x = -Math.PI / 2;
     this.deskRoot.add(this.ghost, this.pulse);
@@ -133,6 +172,12 @@ export class IntroPrototype implements Prototype {
   exit(): void {
     this.carry = null;
     this.twist = null;
+    this.selection.setItems([]);
+  }
+
+  /** The desk's Home button appears for the last step, which teaches it. */
+  homeButton(): boolean {
+    return this.step === 'home';
   }
 
   private setStep(step: Step): void {
@@ -141,6 +186,11 @@ export class IntroPrototype implements Prototype {
     this.button.visible = step === 'poke';
     this.orb.visible = this.ring.visible = step === 'carry';
     this.dial.visible = step === 'twist';
+    for (const c of this.cubes) c.visible = step === 'select';
+    this.selection.setItems([]);
+    this.ghostMat.color.set(step === 'carry' || step === 'select' ? GRAB_COLOR : '#ffffff');
+    // Reaching the last step counts as finishing: Home is how you leave.
+    if (step === 'home') store.set(INTRO_DONE_KEY, true);
     this.orb.position.copy(ORB_HOME);
     this.dialTurn = 0;
     (this.dial.children[0] as Group).rotation.y = 0;
@@ -150,12 +200,9 @@ export class IntroPrototype implements Prototype {
   private complete(at: Vector3): void {
     Sfx.step(this.deskRoot.localToWorld(this.tmp2.copy(at)));
     this.burst.fire(this.tmp.copy(at).setY(0.05));
-    const next = STEPS[STEPS.indexOf(this.step) + 1] ?? 'done';
+    const next = STEPS[STEPS.indexOf(this.step) + 1] ?? 'home';
     this.setStep(next);
-    if (next === 'done') {
-      Sfx.success();
-      store.set(INTRO_DONE_KEY, true);
-    }
+    if (next === 'home') Sfx.success();
   }
 
   holding(): boolean {
@@ -176,10 +223,14 @@ export class IntroPrototype implements Prototype {
       case 'twist':
         this.updateTwist();
         break;
+      case 'select':
+        this.selection.update(dt);
+        if (this.selection.items.length === this.cubes.length) this.complete(CUBES[1]);
+        break;
       case 'menu':
         if (this.ctx.wristMenuOpen) this.complete(new Vector3(0, 0.1, 0));
         break;
-      case 'done':
+      case 'home':
         break;
     }
     this.animateHints();
@@ -296,8 +347,8 @@ export class IntroPrototype implements Prototype {
     const cycle = (this.stepTime % 2) / 2;
     const ease = 0.5 - Math.cos(cycle * Math.PI * 2) / 2;
     const busy = this.carry != null || this.twist != null;
-    this.ghost.visible = !busy && this.step !== 'menu' && this.step !== 'done';
-    this.pulse.visible = this.step !== 'menu' && this.step !== 'done';
+    this.ghost.visible = !busy && this.step !== 'menu' && !this.selection.busy;
+    this.pulse.visible = this.step !== 'menu';
     const pulseScale = 0.05 + (this.stepTime % 1.2) * 0.04;
     (this.pulse.material as MeshBasicMaterial).opacity = 0.6 * (1 - (this.stepTime % 1.2) / 1.2);
     switch (this.step) {
@@ -319,6 +370,17 @@ export class IntroPrototype implements Prototype {
         this.pulse.position.set(DIAL.x, 0.003, DIAL.z);
         break;
       }
+      case 'select': {
+        // Trace a loop around the cubes, as seen from in front.
+        const a = cycle * Math.PI * 2;
+        this.ghost.position.set(Math.cos(a) * 0.13, 0.05 + Math.sin(a) * 0.045, 0.03);
+        this.pulse.position.set(0, 0.003, 0.02);
+        break;
+      }
+      case 'home':
+        this.ghost.position.set(HOME.x, 0.07 - ease * 0.05, HOME.z);
+        this.pulse.position.set(HOME.x, 0.003, HOME.z);
+        break;
       default:
         break;
     }
@@ -331,26 +393,93 @@ export class IntroPrototype implements Prototype {
     const n = STEPS.indexOf(this.step);
     const mouse = !this.ctx.immersive;
     const copy: Record<Step, [string, string]> = {
-      poke: ['Poke the button', mouse ? 'Click the glowing button.' : 'Press it with your index fingertip.'],
-      carry: ['Grab and carry', mouse ? 'Drag the orb into the ring.' : 'Grab the orb with thumb + middle finger, carry it into the ring, let go.'],
-      twist: ['Pinch and twist', mouse ? 'Drag around the dial a quarter turn.' : 'Pinch the dial rim and turn it to the mark.'],
+      poke: ['Poke', mouse ? 'Click the glowing button.' : 'Press the glowing button with your index fingertip.'],
+      twist: ['Pinch: thumb + INDEX', mouse ? 'Drag around the dial a quarter turn.' : 'Pinch the dial rim and turn it to the mark. Pinch draws, presses, twists and slides.'],
+      carry: ['Grab: thumb + MIDDLE', mouse ? 'Drag the orb into the ring.' : 'Grab the orb with thumb + middle finger, carry it into the ring. Grab picks things up.'],
+      select: ['Select: hold a grab in the air', mouse ? 'Right-drag a loop around all three cubes.' : 'Grab in empty air (not on a cube), keep holding, draw a loop around all three.'],
       menu: ['Your menu', mouse ? 'In the headset, turn your left palm toward you. Here, use the bar below.' : 'Turn your left palm toward your face.'],
-      done: ["You're ready", 'Those four moves work everywhere in the lab.'],
+      home: ['Home', mouse ? 'Click the house button on the front-left corner of the desk.' : 'Press the house button on the front-left corner of the desk. It is there in every app.'],
     };
     const [title, body] = copy[this.step];
-    this.panel.setText(this.step === 'done' ? 'Tutorial complete' : `Welcome - step ${n + 1} of ${STEPS.length}`, title, body);
-    const buttons = this.step === 'done'
-      ? [{ id: 'finish', label: 'Open the lab', tone: 'primary' as const }, { id: 'again', label: 'Replay' }]
-      : [{ id: 'skip', label: 'Skip tutorial' }, ...(this.step === 'menu' && mouse ? [{ id: 'next', label: 'Continue', tone: 'primary' as const }] : [])];
+    this.panel.setText(`Welcome - step ${n + 1} of ${STEPS.length}`, title, body);
+    const buttons = [{ id: 'skip', label: this.step === 'home' ? 'Open the lab' : 'Skip tutorial' }, ...(this.step === 'menu' && mouse ? [{ id: 'next', label: 'Continue', tone: 'primary' as const }] : [])];
     this.panel.setButtons(buttons);
     this.panel.invalidate();
   }
 
+  /** Which fingers this step uses, drawn as a small hand. */
+  private drawHand(c: CanvasRenderingContext2D, x: number, y: number, size: number): void {
+    const step = this.step;
+    const finger = step === 'twist' ? 1 : step === 'carry' || step === 'select' ? 2 : step === 'poke' || step === 'home' ? 1 : -1;
+    const pinched = step === 'twist' || step === 'carry' || step === 'select';
+    const color = step === 'carry' || step === 'select' ? GRAB_COLOR : this.accent;
+    const s = size;
+    c.save();
+    c.translate(x, y);
+    c.lineCap = 'round';
+    // Palm.
+    c.fillStyle = 'rgba(255,255,255,0.12)';
+    c.strokeStyle = 'rgba(255,255,255,0.55)';
+    c.lineWidth = s * 0.04;
+    c.beginPath();
+    c.ellipse(0, s * 0.18, s * 0.26, s * 0.24, 0, 0, Math.PI * 2);
+    c.fill();
+    c.stroke();
+    // Fingers: index, middle, ring, pinky.
+    const tips: [number, number][] = [];
+    [-0.17, -0.055, 0.06, 0.17].forEach((fx, i) => {
+      const len = [0.42, 0.48, 0.44, 0.34][i];
+      const bend = pinched && i + 1 === finger ? 0.22 : 0;
+      const tx = (fx - bend * 0.9) * s;
+      const ty = (-0.02 - len + bend) * s;
+      tips.push([tx, ty]);
+      c.strokeStyle = i + 1 === finger ? color : 'rgba(255,255,255,0.55)';
+      c.lineWidth = s * (i + 1 === finger ? 0.1 : 0.08);
+      c.beginPath();
+      c.moveTo(fx * s, 0);
+      c.lineTo(tx, ty);
+      c.stroke();
+    });
+    // Thumb.
+    const thumbTip: [number, number] = pinched ? [tips[finger - 1][0] - s * 0.02, tips[finger - 1][1] + s * 0.05] : [-0.48 * s, -0.12 * s];
+    c.strokeStyle = pinched ? color : 'rgba(255,255,255,0.55)';
+    c.lineWidth = s * (pinched ? 0.1 : 0.08);
+    c.beginPath();
+    c.moveTo(-0.22 * s, 0.22 * s);
+    c.quadraticCurveTo(-0.45 * s, 0.05 * s, thumbTip[0], thumbTip[1]);
+    c.stroke();
+    if (finger > 0) {
+      const [tx, ty] = pinched ? thumbTip : tips[finger - 1];
+      c.fillStyle = color;
+      c.beginPath();
+      c.arc(tx, ty, s * 0.07, 0, Math.PI * 2);
+      c.fill();
+    }
+    if (step === 'select') {
+      c.setLineDash([s * 0.06, s * 0.05]);
+      c.strokeStyle = color;
+      c.lineWidth = s * 0.035;
+      c.beginPath();
+      c.ellipse(s * 0.05, -0.3 * s, s * 0.55, s * 0.3, 0, 0, Math.PI * 2);
+      c.stroke();
+      c.setLineDash([]);
+    }
+    if (step === 'menu') {
+      c.fillStyle = this.accent;
+      c.beginPath();
+      c.arc(0, s * 0.18, s * 0.1, 0, Math.PI * 2);
+      c.fill();
+    }
+    c.restore();
+  }
+
   private drawSteps(ctx: CanvasRenderingContext2D, area: { x: number; y: number; w: number; h: number }): void {
-    const n = this.step === 'done' ? STEPS.length : STEPS.indexOf(this.step);
-    const r = Math.min(area.h * 0.28, 26);
-    const gap = r * 3.2;
-    const x0 = area.x + area.w / 2 - (gap * (STEPS.length - 1)) / 2;
+    const n = STEPS.indexOf(this.step);
+    const handSize = Math.min(area.h * 0.62, 110);
+    this.drawHand(ctx, area.x + handSize * 0.75, area.y + area.h * 0.62, handSize);
+    const r = Math.min(area.h * 0.2, 22);
+    const gap = r * 2.9;
+    const x0 = area.x + handSize * 1.6 + (area.w - handSize * 1.6) / 2 - (gap * (STEPS.length - 1)) / 2;
     const y = area.y + area.h / 2;
     STEPS.forEach((_, i) => {
       if (i < STEPS.length - 1) {
@@ -376,20 +505,30 @@ export class IntroPrototype implements Prototype {
       store.set(INTRO_DONE_KEY, true);
       this.finish();
     }
-    if (id === 'again') this.setStep('poke');
     if (id === 'next' && this.step === 'menu') this.complete(new Vector3(0, 0.1, 0));
   }
 
   // ------------------------------------------------------------ tests
 
   debugState(): unknown {
-    return { step: this.step, dialTurn: +this.dialTurn.toFixed(2), carrying: this.carry != null, lastDrop: this.lastDrop };
+    return { step: this.step, dialTurn: +this.dialTurn.toFixed(2), carrying: this.carry != null, lastDrop: this.lastDrop, selection: this.selection.debug() };
   }
 
   debugActions = {
     press: (id: string) => this.panel.press(id),
     world: (what: string) => {
-      const local = what === 'button' ? BUTTON.clone().setY(0.02) : what === 'orb' ? this.orb.position.clone() : what === 'ring' ? RING.clone().setY(0.02) : DIAL.clone().setY(0.02);
+      const local =
+        what === 'button'
+          ? BUTTON.clone().setY(0.02)
+          : what === 'orb'
+            ? this.orb.position.clone()
+            : what === 'ring'
+              ? RING.clone().setY(0.02)
+              : what === 'cubes'
+                ? CUBES[1].clone()
+                : what === 'home'
+                  ? HOME.clone().setY(0.009)
+                  : DIAL.clone().setY(0.02);
       this.deskRoot.updateMatrixWorld(true);
       const p = this.deskRoot.localToWorld(local);
       return { x: p.x, y: p.y, z: p.z };

@@ -24,6 +24,8 @@ import type { HandState } from './hands.js';
 
 /** Targets closer than this to the hand are left to direct touch. */
 export const NEAR = 0.22;
+/** ...and so are targets within arm's reach of the shoulder: rays are for far things only. */
+export const REACH = 0.62;
 
 export interface RayTarget {
   /** Distance along the ray to the hit, or null. */
@@ -126,9 +128,11 @@ export class HandRays {
         continue;
       }
       let best = Infinity;
+      const shoulder = this.shoulders.get(hand);
       for (const t of RayTargets.list) {
         const d = t.hit(hand.rayOrigin, hand.rayDir);
         if (d == null || d < NEAR || d >= best) continue;
+        if (shoulder && this.end.copy(hand.rayOrigin).addScaledVector(hand.rayDir, d).distanceTo(shoulder) < REACH) continue;
         best = d;
         s.target = t;
       }
