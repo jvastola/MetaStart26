@@ -273,6 +273,11 @@ export class Selection {
     return caught;
   }
 
+  /** True if a grab here would pick something up (rather than start a box). */
+  grabbableNear(world: Vector3): boolean {
+    return this.nearAnything(world);
+  }
+
   /** True if a world point is on or next to anything selectable. */
   private nearAnything(world: Vector3): boolean {
     if (this.sources.some((s) => s.grabbable?.(world))) return true;

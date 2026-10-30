@@ -235,6 +235,69 @@ export const ICONS: Record<string, Draw> = {
     c.textBaseline = 'middle';
     c.fillText('AI', s * 0.5, s * 0.54);
   },
+  move: (c, s) => {
+    line(c, [[0.5, 0.18], [0.5, 0.82]], s);
+    line(c, [[0.18, 0.5], [0.82, 0.5]], s);
+    arrowHead(c, 0.5, 0.14, -Math.PI / 2, 0.1, s);
+    arrowHead(c, 0.5, 0.86, Math.PI / 2, 0.1, s);
+    arrowHead(c, 0.14, 0.5, Math.PI, 0.1, s);
+    arrowHead(c, 0.86, 0.5, 0, 0.1, s);
+  },
+  press: (c, s) => {
+    circle(c, 0.5, 0.62, 0.2, s);
+    line(c, [[0.5, 0.14], [0.5, 0.4]], s);
+    arrowHead(c, 0.5, 0.42, Math.PI / 2, 0.09, s);
+  },
+  twist: (c, s) => {
+    c.beginPath();
+    c.arc(0.5 * s, 0.5 * s, 0.28 * s, -Math.PI * 0.9, Math.PI * 0.2);
+    c.stroke();
+    arrowHead(c, 0.5 + Math.cos(Math.PI * 0.2) * 0.28, 0.5 + Math.sin(Math.PI * 0.2) * 0.28, Math.PI * 0.7, 0.11, s);
+    circle(c, 0.5, 0.5, 0.07, s, true);
+  },
+  sound: (c, s) => {
+    c.beginPath();
+    c.moveTo(0.16 * s, 0.4 * s);
+    c.lineTo(0.3 * s, 0.4 * s);
+    c.lineTo(0.48 * s, 0.24 * s);
+    c.lineTo(0.48 * s, 0.76 * s);
+    c.lineTo(0.3 * s, 0.6 * s);
+    c.lineTo(0.16 * s, 0.6 * s);
+    c.closePath();
+    c.fill();
+    c.beginPath();
+    c.arc(0.5 * s, 0.5 * s, 0.16 * s, -0.7, 0.7);
+    c.stroke();
+    c.beginPath();
+    c.arc(0.5 * s, 0.5 * s, 0.3 * s, -0.7, 0.7);
+    c.stroke();
+  },
+  mute: (c, s) => {
+    c.beginPath();
+    c.moveTo(0.16 * s, 0.4 * s);
+    c.lineTo(0.3 * s, 0.4 * s);
+    c.lineTo(0.48 * s, 0.24 * s);
+    c.lineTo(0.48 * s, 0.76 * s);
+    c.lineTo(0.3 * s, 0.6 * s);
+    c.lineTo(0.16 * s, 0.6 * s);
+    c.closePath();
+    c.fill();
+    line(c, [[0.6, 0.38], [0.82, 0.62]], s);
+    line(c, [[0.82, 0.38], [0.6, 0.62]], s);
+  },
+  eye: (c, s) => {
+    c.beginPath();
+    c.moveTo(0.12 * s, 0.5 * s);
+    c.quadraticCurveTo(0.5 * s, 0.14 * s, 0.88 * s, 0.5 * s);
+    c.quadraticCurveTo(0.5 * s, 0.86 * s, 0.12 * s, 0.5 * s);
+    c.stroke();
+    circle(c, 0.5, 0.5, 0.11, s, true);
+  },
+  room: (c, s) => {
+    line(c, [[0.5, 0.18], [0.82, 0.34], [0.82, 0.7], [0.5, 0.86], [0.18, 0.7], [0.18, 0.34]], s, true);
+    line(c, [[0.18, 0.34], [0.5, 0.5], [0.82, 0.34]], s);
+    line(c, [[0.5, 0.5], [0.5, 0.86]], s);
+  },
   home: (c, s) => {
     line(c, [[0.18, 0.5], [0.5, 0.2], [0.82, 0.5]], s);
     line(c, [[0.28, 0.42], [0.28, 0.8], [0.72, 0.8], [0.72, 0.42]], s);

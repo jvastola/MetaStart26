@@ -175,6 +175,23 @@ export class IntroPrototype implements Prototype {
     this.selection.setItems([]);
   }
 
+  /** Only the fingers the current step uses get an icon. */
+  fingerHints(): { index: string | null; middle: string | null } {
+    switch (this.step) {
+      case 'poke':
+      case 'home':
+        return { index: 'press', middle: null };
+      case 'twist':
+        return { index: 'twist', middle: null };
+      case 'carry':
+        return { index: null, middle: 'move' };
+      case 'select':
+        return { index: null, middle: 'select' };
+      default:
+        return { index: null, middle: null };
+    }
+  }
+
   /** The desk's Home button appears for the last step, which teaches it. */
   homeButton(): boolean {
     return this.step === 'home';

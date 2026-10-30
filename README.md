@@ -92,6 +92,18 @@ can only do one at a time:
 The cursor ring sits between the thumb and whichever finger is closer. It
 fills with the app's colour for a pinch and gold for a grab.
 
+**Fingertip icons.** A small icon floats just past your index and middle
+fingertips saying what each pinch does right now, and it brightens as the
+fingers close. In Sketch the index shows draw (or erase, or select) and the
+middle shows move when it is on a stroke, select in empty air; in Clay the
+index shows the current tool and the middle shows size over the turntable
+base; Shot Board shows snap and move; the tutorial shows only the fingers the
+current step uses.
+
+**Hand menu.** Turn your left palm toward you and a small halo opens above
+it: round buttons fanned along its top (Home, How to, Sound, Passthrough or
+Virtual room) around the app's name. Poke or pinch one with the other hand.
+
 **Far things: a ray that only appears when it's useful.** Each hand has a ray
 from your shoulder through your palm. It stays hidden until it lands on
 something usable beyond arm's reach (a button, a panel, a window bar). Then
@@ -154,7 +166,7 @@ Conjure creations.
 | Grab Clay's turntable base and move your hand up or down | Resize the sculpture (20 cm covers the whole range) |
 | Poke keys on the desk keyboard | Type; **Mic** dictates. Opens from Desk Focus **New card** and Conjure **Type** |
 | Poke the house or **?** button on the desk's front-left corner | Home, or this app's how-to card (in every app) |
-| Turn your left palm toward your face | Hand menu: Home, How to, Sound on/off, Passthrough / Virtual room |
+| Turn your left palm toward your face | Hand menu (a halo of round buttons): Home, How to, Sound, Passthrough / Virtual room |
 | Thumb microgestures (thumb tap, swipe on the index finger) | Shortcuts: start/pause, next card, undo, bigger/smaller, rotate |
 
 **Controllers work too**, though hands are the design target:
@@ -277,6 +289,8 @@ src/core/rays.ts         far rays that show only on usable targets out of reach
 src/core/selection.ts    box select with live preview, group move/scale, selection menu
 src/core/desk-objects.ts things on the desk in every app: pinned prints, strokes, creations, photos
 src/core/item-actions.ts the pin + delete pair that appears for a tapped thing
+src/core/finger-hints.ts icons by the fingertips: what each pinch does now
+src/core/palm-menu.ts    the hand menu halo
 src/core/trash.ts        the desk bin
 src/core/storyboard.ts   storyboard: framed 3D shot cards, ledge buttons, animatic player
 src/core/grab.ts         hand-rotation hold used by every pickable object

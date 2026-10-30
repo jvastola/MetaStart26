@@ -155,6 +155,11 @@ export class ShotBoardPrototype implements Prototype {
     this.drag = null;
   }
 
+  /** Pinch (both hands) frames a shot; grab moves figures and cards. */
+  fingerHints(): { index: string; middle: string } {
+    return { index: 'snap', middle: 'move' };
+  }
+
   holding(): boolean {
     return this.drag != null || this.board.dragging;
   }

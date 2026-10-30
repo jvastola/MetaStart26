@@ -36,6 +36,9 @@ import { TRASH_POS, TrashBin } from './core/trash.js';
 import { DeskObjects } from './core/desk-objects.js';
 import { IconButton } from './core/icon-button.js';
 import { HandRays } from './core/rays.js';
+import { PalmMenu } from './core/palm-menu.js';
+import { FingerHints } from './core/finger-hints.js';
+import { GRAB_COLOR } from './core/art.js';
 import { grabDistance, HandState, Hands, pointerDistance } from './core/hands.js';
 import { CanvasPanel } from './core/panel.js';
 import { Sfx } from './core/sfx.js';
@@ -107,7 +110,10 @@ export class LabSystem extends createSystem({
   private setupTime = 0;
   private ghost!: Group;
   private setupPanel!: CanvasPanel;
-  private wristPanel!: CanvasPanel;
+  private palmMenu!: PalmMenu;
+  /** Desktop-only preview pose for the hand menu (tests and screenshots). */
+  private palmPreview: { palm: Vector3; normal: Vector3 } | null = null;
+  private fingerHints!: FingerHints;
   private wristOpen = false;
   private toastPanel!: CanvasPanel;
   private toastTime = 0;
@@ -553,6 +559,17 @@ export class LabSystem extends createSystem({
     if (this.ctx.immersive) for (const h of this.hands.both) this.rays.aim(h, this.head, this.forward);
     this.cursors[0].update(this.hands.left, this.head, handsVisible);
     this.cursors[1].update(this.hands.right, this.head, handsVisible);
+    // What each pinch does right now, by the fingertips.
+    const hintsOn = handsVisible && this.setup === 'ready' && !this.wristOpen && !this.keyboard.isOpen;
+    const active = this.active;
+    this.fingerHints.update(
+      this.hands.both,
+      this.camera.getWorldPosition(this.eye),
+      hintsOn,
+      (h) => (active?.fingerHints ? active.fingerHints(h) : { index: 'press', middle: 'move' }),
+      [active?.accent ?? '#9fc7ff', GRAB_COLOR],
+      dt,
+    );
     if (this.skeletons.length) {
       this.skeletons[0].update(this.hands.left, handsVisible);
       this.skeletons[1].update(this.hands.right, handsVisible);
@@ -611,12 +628,16 @@ export class LabSystem extends createSystem({
   }
 
   private refreshWristButtons(): void {
-    this.wristPanel.setButtons([
-      { id: 'home', label: 'Home', tone: 'primary' },
-      { id: 'help', label: 'How to' },
-      { id: 'mute', label: Sfx.muted ? 'Sound off' : 'Sound on', tone: Sfx.muted ? 'default' : 'active' },
-      { id: 'room', label: this.passthrough ? 'Passthrough' : 'Virtual room', tone: this.passthrough ? 'active' : 'default' },
-    ]);
+    const b = this.palmMenu.buttons;
+    const sound = b.get('mute')!;
+    sound.icon = Sfx.muted ? 'mute' : 'sound';
+    sound.label = Sfx.muted ? 'Sound is off (press for on)' : 'Sound is on (press for off)';
+    sound.active = !Sfx.muted;
+    const room = b.get('room')!;
+    room.icon = this.passthrough ? 'eye' : 'room';
+    room.label = this.passthrough ? 'Passthrough (press for a virtual room)' : 'Virtual room (press for passthrough)';
+    room.active = this.passthrough;
+    b.get('help')!.disabled = !(this.active?.howTo?.length ?? 0);
   }
 
   /**
@@ -660,15 +681,13 @@ export class LabSystem extends createSystem({
       this.ctx.wristMenuOpen = faces;
       if (faces) Sfx.blip(900);
     }
-    const panel = this.wristPanel;
-    panel.mesh.visible = this.wristOpen;
-    if (!this.wristOpen) return;
-    // Float just above the palm, turned to face the head.
-    panel.mesh.position.copy(left.palm).addScaledVector(left.palmNormal, 0.06);
-    panel.mesh.position.y += 0.07;
-    panel.mesh.rotation.set(0, Math.atan2(this.head.x - panel.mesh.position.x, this.head.z - panel.mesh.position.z), 0);
-    panel.setText('', this.active?.title ?? 'Lab', '');
-    panel.update([this.hands.right], dt);
+    // A halo of round buttons above the palm, facing you.
+    if (this.wristOpen) {
+      this.palmMenu.setTitle(this.active?.title ?? 'Lab', this.active?.accent ?? '#9fc7ff');
+      this.refreshWristButtons();
+    }
+    const preview = !this.ctx.immersive ? this.palmPreview : null;
+    this.palmMenu.update(this.wristOpen || preview != null, preview?.palm ?? left.palm, preview?.normal ?? left.palmNormal, this.camera.getWorldPosition(this.tmp2), dt);
   }
 
   private updateToast(dt: number): void {
@@ -721,9 +740,13 @@ export class LabSystem extends createSystem({
     this.setupPanel.mesh.visible = false;
     chrome.add(this.setupPanel.mesh);
 
-    this.wristPanel = new CanvasPanel({ width: 0.17, height: 0.14, columns: 2, buttonHeight: 0.03 });
-    this.refreshWristButtons();
-    this.wristPanel.onPress = (id) => {
+    this.palmMenu = new PalmMenu([
+      { id: 'home', icon: 'home', label: 'Home' },
+      { id: 'help', icon: 'help', label: 'How to use this app' },
+      { id: 'mute', icon: 'sound', label: 'Sound' },
+      { id: 'room', icon: 'eye', label: 'Passthrough' },
+    ]);
+    this.palmMenu.onPress = (id) => {
       if (id === 'home') this.go('hub');
       if (id === 'help' && this.active) this.showHowTo(this.active, true);
       if (id === 'mute') {
@@ -733,8 +756,9 @@ export class LabSystem extends createSystem({
       if (id === 'room') this.setPassthrough(!this.passthrough);
       this.refreshWristButtons();
     };
-    this.wristPanel.mesh.visible = false;
-    chrome.add(this.wristPanel.mesh);
+    chrome.add(this.palmMenu.group);
+    this.fingerHints = new FingerHints();
+    chrome.add(this.fingerHints.group);
 
     this.mat = new DeskMat();
     this.desk.add(this.mat.mesh);
@@ -960,10 +984,21 @@ export class LabSystem extends createSystem({
       passthrough: () => this.passthrough,
       togglePassthrough: () => this.setPassthrough(!this.passthrough),
       wristButton: (id: string) => {
-        const p = this.wristPanel.buttonWorld(id);
-        if (!p) return null;
-        const n = this.wristPanel.normalWorld();
+        const b = IconButton.find(`palm:${id}`);
+        if (!b) return null;
+        const p = b.worldCenter();
+        const n = b.worldNormal();
         return { x: p.x, y: p.y, z: p.z, nx: n.x, ny: n.y, nz: n.z };
+      },
+      fingerHints: () => this.fingerHints.debug(),
+      /** Desktop preview of the hand menu, floating in front of the camera (for screenshots). */
+      previewPalm: () => {
+        const eye = this.camera.getWorldPosition(new Vector3());
+        const dir = this.camera.getWorldDirection(new Vector3());
+        const palm = eye.clone().addScaledVector(dir, 0.35).add(new Vector3(0, -0.1, 0));
+        this.palmMenu.setTitle(this.active?.title ?? 'Lab', this.active?.accent ?? '#9fc7ff');
+        this.refreshWristButtons();
+        this.palmPreview = { palm, normal: dir.clone().negate() };
       },
       keyWorld: (id: string) => this.keyboard.keyWorld(id),
       deskBar: () => {

@@ -703,6 +703,13 @@ export class SketchPrototype implements Prototype {
     return SIZES.reduce((a, p) => (Math.abs(p.r - this.brushRadius) < Math.abs(a.r - this.brushRadius) ? p : a)).name;
   }
 
+  /** Pinch draws (or erases, or boxes); grab moves a stroke on it, boxes in the air. */
+  fingerHints(hand: HandState): { index: string; middle: string } {
+    const index = !this.drawEnabled ? 'press' : this.erasing ? 'erase' : this.selecting ? 'select' : 'draw';
+    // Judged at the middle fingertip, where the grab lands once the thumb closes.
+    return { index, middle: this.selection.grabbableNear(hand.grabbing ? hand.grabPoint : hand.tips[2]) ? 'move' : 'select' };
+  }
+
   /** The current brush colour (for painting a selection). */
   get brushColor(): string {
     return this.colorHex;

@@ -500,6 +500,11 @@ export class ClayPrototype implements Prototype {
     store.set(this.keys.color, hex);
   }
 
+  /** Pinch works the current tool; grab resizes on the base, moves things elsewhere. */
+  fingerHints(hand: HandState): { index: string; middle: string } {
+    return { index: this.tool, middle: this.onBase(hand.grabbing ? hand.grabPoint : hand.tips[2]) || this.baseGrab?.hand === hand ? 'size' : 'move' };
+  }
+
   /** True if this hand is pulling clay, spinning the turntable or carrying a print. */
   owns(hand: HandState): boolean {
     return this.pulls.some((p) => p.hand === hand) || this.spin?.hand === hand || this.printHolds.some((p) => p.hand === hand) || this.baseGrab?.hand === hand;

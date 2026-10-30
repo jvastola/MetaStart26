@@ -232,6 +232,11 @@ export class StudioPrototype implements Prototype {
     this.saveLayout();
   }
 
+  fingerHints(hand: HandState): { index: string; middle: string } {
+    const sketch = this.sketch.fingerHints(hand);
+    return { index: sketch.index, middle: this.selection.grabbableNear(hand.grabbing ? hand.grabPoint : hand.tips[2]) ? 'move' : 'select' };
+  }
+
   holding(): boolean {
     return (
       [...this.windows.values()].some((w) => w.moving) ||

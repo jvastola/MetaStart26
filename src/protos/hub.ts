@@ -320,6 +320,10 @@ export class HubPrototype implements Prototype {
     return false;
   }
 
+  fingerHints(): { index: string; middle: null } {
+    return { index: 'press', middle: null };
+  }
+
   update(dt: number): void {
     this.header.update([], dt);
     this.cooldown = Math.max(0, this.cooldown - dt);
