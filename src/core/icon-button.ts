@@ -191,8 +191,12 @@ export class IconButton {
   }
 
   /** Press it (also used by tests and shortcuts; `force` skips the repeat guard). */
+  /** Times pressed (for tests). */
+  presses = 0;
+
   press(force = false): void {
     if (this._disabled || (this.cooldown > 0 && !force)) return;
+    this.presses += 1;
     this.cooldown = COOLDOWN;
     this.push = 1;
     Sfx.click(this.group.getWorldPosition(this.local));
@@ -246,11 +250,17 @@ export class IconButton {
         // Poke: the fingertip comes down onto the face.
         const tip = this.group.worldToLocal(this.local.copy(p.indexTip));
         const inside = Math.hypot(tip.x, tip.z) < this.radius * 1.2;
-        const last = this.lastY.get(p) ?? 1;
-        this.lastY.set(p, inside ? tip.y : 1);
         if (inside && tip.y < 0.05 && tip.y > -0.02) hover = true;
+        // Arm while the fingertip is above the face (or off it); press as it comes down.
         // The tip joint sits inside the finger pad, so a touch registers a few mm above the face.
-        if (inside && last > HEIGHT + 0.012 && tip.y <= HEIGHT + 0.006 && tip.y > -0.02) this.press();
+        // A finger sliding in sideways at desk height never arms it.
+        const armed = this.lastY.get(p) ?? 0;
+        if (!inside) this.lastY.set(p, 0);
+        else if (tip.y > HEIGHT + 0.012) this.lastY.set(p, 1);
+        else if (armed > 0 && tip.y <= HEIGHT + 0.006 && tip.y > -0.02) {
+          this.lastY.set(p, 0);
+          this.press();
+        }
         // Or pinch on it.
         if (p.pinchStarted) {
           const q = this.group.worldToLocal(this.local.copy(p.pinchPoint));

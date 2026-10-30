@@ -540,12 +540,14 @@ export class LabSystem extends createSystem({
       this.keyboard.update(this.ctx.pointers, dt);
       return;
     }
+    // Round buttons first: they are the most specific target (a window's
+    // buttons can sit right next to the desk's own move bar).
+    IconButton.updateAll(this.ctx.pointers, this.camera.getWorldPosition(this.eye), dt);
     this.updateDeskGrab();
     this.updateWristMenu(dt);
     this.updateCoach(dt);
     // The director's frame works in every prototype, unless it owns the pinches.
-    // Desk buttons first, then far rays: both consume the pinches they use.
-    IconButton.updateAll(this.ctx.pointers, this.camera.getWorldPosition(this.eye), dt);
+    // Far rays consume the pinches they use.
     this.rays.update(this.hands.both, this.ctx.immersive && !this.wristOpen && this.deskGrab == null, (h) => h.pinching || h.grabbing);
     const frameEnabled = this.ctx.immersive && !this.wristOpen && this.deskGrab == null && !(this.active?.holding?.() ?? false);
     const caption = this.frame.update(this.hands.left, this.hands.right, this.head, frameEnabled, dt);
@@ -974,7 +976,7 @@ export class LabSystem extends createSystem({
         if (!b) return null;
         const c = b.worldCenter();
         const n = b.worldNormal();
-        return { x: c.x, y: c.y, z: c.z, nx: n.x, ny: n.y, nz: n.z, active: b.active, disabled: b.disabled, label: b.label, hovered: b.hovered };
+        return { x: c.x, y: c.y, z: c.z, nx: n.x, ny: n.y, nz: n.z, active: b.active, disabled: b.disabled, label: b.label, hovered: b.hovered, presses: b.presses };
       },
       pressIcon: (id: string) => IconButton.find(id)?.press(true),
       head: () => ({ x: this.head.x, y: this.head.y, z: this.head.z }),
