@@ -44,6 +44,8 @@ import { ColorWheel } from '../../core/color-wheel.js';
 import { DeskSlider } from '../../core/slider.js';
 import { IconButton } from '../../core/icon-button.js';
 import type { Selectable, SelectionSource } from '../../core/selection.js';
+import { ItemActions } from '../../core/item-actions.js';
+import { pointerDistance } from '../../core/hands.js';
 import { Sfx } from '../../core/sfx.js';
 import {
   applyGrab,
@@ -112,11 +114,11 @@ const sliderToBrush = (v: number): number => 0.5 + v * 2;
 
 /** The round buttons around the turntable, left to right. */
 const BUTTONS: [id: string, icon: string, label: string][] = [
-  ['sculpt', 'sculpt', 'Sculpt: press in, pinch to pull'],
-  ['smooth', 'smooth', 'Smooth'],
-  ['inflate', 'inflate', 'Inflate'],
+  ['sculpt', 'sculpt', 'Sculpt (hold: brush size)'],
+  ['smooth', 'smooth', 'Smooth (hold: strength)'],
+  ['inflate', 'inflate', 'Inflate (hold: strength)'],
   ['mirror', 'mirror', 'Mirror'],
-  ['spin', 'spin', 'Auto spin'],
+  ['spin', 'spin', 'Auto spin (hold: speed)'],
   ['color', 'colour', 'Colour'],
   ['undo', 'undo', 'Undo'],
   ['reset', 'reset', 'Reset'],
@@ -145,6 +147,10 @@ export class ClayPrototype implements Prototype {
   private brushSlider!: DeskSlider;
   private brush = 1;
   private autoSpin = false;
+  /** How hard Smooth and Inflate work (hold either button to slide). */
+  private strength = 1;
+  /** Auto spin speed, rad/s (hold Auto spin to slide). */
+  private spinSpeed = 0.6;
   private layoutMode: 'full' | 'compact' = 'full';
   private turntable = new Group();
   private clay!: Mesh;
@@ -165,8 +171,12 @@ export class ClayPrototype implements Prototype {
   private pulls: { hand: HandState; grab: Grab; start: Vector3 }[] = [];
   private spin: { hand: HandState; last: number } | null = null;
   private prints: Print[] = [];
-  private printHolds: { print: Print; hand: HandState; pose: HeldPose }[] = [];
+  private printHolds: { print: Print; hand: HandState; pose: HeldPose; from: Vector3 }[] = [];
   private printPad!: Mesh;
+  /** Pin and delete for the tapped print. */
+  private printActions!: ItemActions;
+  private tappedPrint: Print | null = null;
+  private printTaps: { print: Print; hand: HandState; time: number }[] = [];
   private readonly printSelectables = new Map<Print, Selectable>();
   /** Lets a Selection find, move, copy, paint and delete prints. */
   readonly selectionSource: SelectionSource = {
@@ -197,6 +207,7 @@ export class ClayPrototype implements Prototype {
         (p.holder.parent ?? this.deskRoot).add(holder);
         const pinButton = new IconButton({ id: `clay:pin:${(this.printed += 1)}`, icon: 'pin', label: 'Pin it here', accent: this.accent, radius: 0.01 });
         pinButton.group.position.copy(p.pinButton.group.position);
+        pinButton.group.visible = false;
         holder.add(pinButton.group);
         const copy: Print = { holder, mesh, material, height: p.height, progress: 1, clip: p.clip.clone(), settleTo: null, pinned: false, pinButton };
         pinButton.onPress = () => this.togglePin(copy);
@@ -207,6 +218,12 @@ export class ClayPrototype implements Prototype {
     },
     recolor: (items, hex) => {
       for (const sel of items) this.printOf(sel)?.material.color.set(hex);
+    },
+    pin: (items) => {
+      for (const sel of items) {
+        const p = this.printOf(sel);
+        if (p) this.togglePin(p);
+      }
     },
   };
 
@@ -220,6 +237,10 @@ export class ClayPrototype implements Prototype {
           p.holder.updateMatrixWorld(true);
           p.holder.localToWorld(c.set(0, p.height / 2, 0));
           return Math.max(0.04, p.height * 0.6) * p.holder.scale.x;
+        },
+        setLit: (on) => {
+          p.material.emissive.set(on ? this.accent : '#000000');
+          p.material.emissiveIntensity = on ? 0.35 : 0;
         },
       };
       this.printSelectables.set(p, sel);
@@ -283,6 +304,38 @@ export class ClayPrototype implements Prototype {
     for (const [id, icon, label] of BUTTONS) {
       const b = new IconButton({ id: `clay:${id}`, icon, label, accent: this.accent, radius: 0.015 });
       b.onPress = () => this.onButton(id);
+      // Press and hold for a slider: brush size, strength or spin speed.
+      if (id === 'sculpt') {
+        b.hold = {
+          get: () => this.brushSlider.value,
+          set: (v) => {
+            this.brushSlider.set(v);
+            this.brushSlider.onChange(v);
+            this.tool = 'sculpt';
+          },
+          label: (v) => `Brush ${sliderToBrush(v).toFixed(1)}x`,
+        };
+      }
+      if (id === 'smooth' || id === 'inflate') {
+        b.hold = {
+          get: () => (this.strength - 0.25) / 2.25,
+          set: (v) => {
+            this.strength = 0.25 + v * 2.25;
+            this.tool = id;
+          },
+          label: () => `Strength ${this.strength.toFixed(1)}x`,
+        };
+      }
+      if (id === 'spin') {
+        b.hold = {
+          get: () => this.spinSpeed / 2,
+          set: (v) => {
+            this.spinSpeed = v * 2;
+            this.autoSpin = this.spinSpeed > 0.05;
+          },
+          label: () => (this.spinSpeed > 0.05 ? `Spin ${(this.spinSpeed * 9.55).toFixed(0)} rpm` : 'Spin off'),
+        };
+      }
       this.buttons.set(id, b);
       this.deskRoot.add(b.group);
     }
@@ -314,6 +367,20 @@ export class ClayPrototype implements Prototype {
     this.printPad.rotation.x = -Math.PI / 2;
     this.printPad.userData.hideInShots = true;
     this.deskRoot.add(this.printPad);
+    this.printActions = new ItemActions(
+      `clay-print-${this.keys.sculpt}`,
+      this.accent,
+      () => {
+        if (this.tappedPrint) this.togglePin(this.tappedPrint);
+      },
+      () => {
+        if (this.tappedPrint) {
+          Sfx.trash(this.tappedPrint.holder.getWorldPosition(this.tmp));
+          this.removePrint(this.tappedPrint);
+        }
+      },
+    );
+    this.deskRoot.add(this.printActions.group);
     this.setLayout(this.layoutMode);
     // Prints build up behind a clipping plane.
     ctx.renderer.localClippingEnabled = true;
@@ -446,12 +513,13 @@ export class ClayPrototype implements Prototype {
     if (this.wheel.mesh.visible) this.wheel.update(this.ctx.pointers);
     this.sizeSlider.update(this.ctx.pointers);
     if (!this.sizeSlider.active) this.brushSlider.update(this.ctx.pointers);
-    if (this.autoSpin && this.spin == null) this.turntable.rotation.y += dt * 0.6;
+    if (this.autoSpin && this.spin == null) this.turntable.rotation.y += dt * this.spinSpeed;
     if (this.sizeSlider.active || this.brushSlider.active) {
       this.refresh();
       return;
     }
     this.updatePrints(dt);
+    this.updatePrintTaps(dt);
     this.updateBaseGrab();
     if (this.options.gestures !== false) this.updateGestures();
     this.updateSpin();
@@ -534,8 +602,8 @@ export class ClayPrototype implements Prototype {
         const normals = this.geometry.attributes.normal.array as Float32Array;
         for (let t = 0; t < count; t += 1) {
           const [x, y, z] = [this.tips[t * 3], this.tips[t * 3 + 1], this.tips[t * 3 + 2]];
-          if (this.tool === 'smooth') moved += smoothAt(this.positions, this.neighbors, x, y, z, 0.016 * this.brush * k, 0.35);
-          else moved += inflateAt(this.positions, normals, x, y, z, 0.016 * this.brush * k, 0.0006 * k);
+          if (this.tool === 'smooth') moved += smoothAt(this.positions, this.neighbors, x, y, z, 0.016 * this.brush * k, Math.min(0.9, 0.35 * this.strength));
+          else moved += inflateAt(this.positions, normals, x, y, z, 0.016 * this.brush * k, 0.0006 * k * this.strength);
         }
       }
       if (moved > 0) this.dirty = true;
@@ -598,8 +666,8 @@ export class ClayPrototype implements Prototype {
       const normals = this.geometry.attributes.normal.array as Float32Array;
       const apply = (x: number) => {
         const k = 1 / this.clay.scale.x;
-        if (this.tool === 'smooth') smoothAt(this.positions, this.neighbors, x, l.y, l.z, 0.018 * this.brush * k, 0.4);
-        else inflateAt(this.positions, normals, x, l.y, l.z, 0.018 * this.brush * k, 0.0008 * k);
+        if (this.tool === 'smooth') smoothAt(this.positions, this.neighbors, x, l.y, l.z, 0.018 * this.brush * k, Math.min(0.9, 0.4 * this.strength));
+        else inflateAt(this.positions, normals, x, l.y, l.z, 0.018 * this.brush * k, 0.0008 * k * this.strength);
       };
       apply(l.x);
       if (this.mirror) apply(-l.x);
@@ -703,6 +771,8 @@ export class ClayPrototype implements Prototype {
     const reach = Math.max(Math.abs(box.min.x), Math.abs(box.max.x), Math.abs(box.min.z), Math.abs(box.max.z)) * scale;
     const pinButton = new IconButton({ id: `clay:pin:${(this.printed += 1)}`, icon: 'pin', label: 'Pin it here', accent: this.accent, radius: 0.01 });
     pinButton.group.position.set(0, 0.001, reach + 0.018);
+    // Pin and delete appear only when the print is tapped (see printActions).
+    pinButton.group.visible = false;
     holder.add(pinButton.group);
     const print: Print = { holder, mesh, material, height: (box.max.y - box.min.y) * scale, progress: building ? 0 : 1, clip, settleTo: null, pinned: false, pinButton };
     pinButton.onPress = () => this.togglePin(print);
@@ -757,7 +827,35 @@ export class ClayPrototype implements Prototype {
     this.ctx.toast('Printing a copy. Grab it with thumb + middle finger.');
   }
 
+  /** Show or hide the tapped print's pin and delete buttons. */
+  private tapPrint(print: Print | null): void {
+    this.tappedPrint = print;
+    if (print) this.printActions.show(print.holder, () => print.holder.localToWorld(new Vector3(0, print.height, 0)));
+    else this.printActions.hide();
+  }
+
+  /** A quick pinch on a print shows its buttons; a pinch elsewhere hides them. */
+  private updatePrintTaps(dt: number): void {
+    for (const t of this.printTaps) t.time += dt;
+    for (const hand of this.ctx.pointers) {
+      if (!hand.tracked || !hand.pinchStarted) continue;
+      const print = this.prints.find((p) => p.progress >= 1 && pointerDistance(hand, p.holder.localToWorld(this.tmp.set(0, p.height / 2, 0))) < Math.max(0.045, p.height * 0.6));
+      if (print) {
+        this.printTaps.push({ print, hand, time: 0 });
+        hand.clearEdges();
+      } else if (this.tappedPrint) this.tapPrint(null);
+    }
+    for (let i = this.printTaps.length - 1; i >= 0; i -= 1) {
+      const t = this.printTaps[i];
+      if (t.hand.pinching && t.hand.tracked) continue;
+      this.printTaps.splice(i, 1);
+      if (t.time < 0.4) this.tapPrint(this.tappedPrint === t.print ? null : t.print);
+    }
+    this.printActions.update(this.ctx.camera.getWorldPosition(this.tmp2));
+  }
+
   private removePrint(print: Print): void {
+    if (this.tappedPrint === print) this.tapPrint(null);
     this.prints = this.prints.filter((p) => p !== print);
     this.printHolds = this.printHolds.filter((h) => h.print !== print);
     print.holder.removeFromParent();
@@ -808,7 +906,7 @@ export class ClayPrototype implements Prototype {
       const pose = new HeldPose();
       pose.begin(hand, print.holder);
       print.settleTo = null;
-      this.printHolds.push({ print, hand, pose });
+      this.printHolds.push({ print, hand, pose, from: print.holder.position.clone() });
       if (hand.isMouse) {
         this.ctx.camera.getWorldDirection(this.tmp2).negate();
         this.ctx.setMousePlane(print.holder.getWorldPosition(this.tmp), this.tmp2);
@@ -824,6 +922,13 @@ export class ClayPrototype implements Prototype {
         continue;
       }
       this.printHolds.splice(i, 1);
+      // A mouse click that did not move it: show its buttons instead.
+      if (hold.hand.isMouse && hold.print.holder.position.distanceTo(hold.from) < 0.01) {
+        this.ctx.desk.getWorldPosition(this.tmp);
+        this.ctx.setMousePlane(this.tmp, this.tmp2.set(0, 1, 0));
+        this.tapPrint(this.tappedPrint === hold.print ? null : hold.print);
+        continue;
+      }
       const binned = this.ctx.trash.take(hold.hand.holdPoint);
       if (hold.hand.isMouse) {
         this.ctx.desk.getWorldPosition(this.tmp);
@@ -909,7 +1014,7 @@ export class ClayPrototype implements Prototype {
       maxR = Math.max(maxR, r);
       minR = Math.min(minR, r);
     }
-    return { pinned: this.prints.filter((p) => p.pinned).length, baseGrab: this.baseGrab != null, brush: +this.brush.toFixed(2), autoSpin: this.autoSpin, layout: this.layoutMode, scale: +this.clay.scale.x.toFixed(2), wheelVisible: this.wheel.mesh.visible, tool: this.tool, mirror: this.mirror, maxR: +maxR.toFixed(4), minR: +minR.toFixed(4), undo: this.undo.length, spin: +this.turntable.rotation.y.toFixed(3), prints: this.prints.map((p) => ({ progress: +p.progress.toFixed(2), pos: p.holder.position.toArray().map((v) => +v.toFixed(3)), height: +p.height.toFixed(3) })), printing: this.printHolds.length, printed: this.printed };
+    return { strength: +this.strength.toFixed(2), spinSpeed: +this.spinSpeed.toFixed(2), pinned: this.prints.filter((p) => p.pinned).length, baseGrab: this.baseGrab != null, brush: +this.brush.toFixed(2), autoSpin: this.autoSpin, layout: this.layoutMode, scale: +this.clay.scale.x.toFixed(2), wheelVisible: this.wheel.mesh.visible, tool: this.tool, mirror: this.mirror, maxR: +maxR.toFixed(4), minR: +minR.toFixed(4), undo: this.undo.length, spin: +this.turntable.rotation.y.toFixed(3), prints: this.prints.map((p) => ({ progress: +p.progress.toFixed(2), pos: p.holder.position.toArray().map((v) => +v.toFixed(3)), height: +p.height.toFixed(3) })), printing: this.printHolds.length, printed: this.printed };
   }
 
   debugActions = {

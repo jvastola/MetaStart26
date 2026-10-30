@@ -102,6 +102,10 @@ front of you. Up close, poking and pinching stay in charge.
 
 **Buttons are icons.** Controls are round buttons on the desk with an icon on
 top; their name appears only while a hand, the cursor or a ray is on them.
+**Press and hold** some of them and a slider pops out: slide sideways, let go
+to finish (a quick press still does the normal thing). Sketch: Size (brush
+width), Erase (eraser size). Clay: Sculpt (brush size), Smooth and Inflate
+(strength), Auto spin (speed).
 
 **Selecting several things: a box.** Grab (thumb + middle) on empty air and
 keep holding: a see-through box stretches from where you started to your hand,
@@ -110,20 +114,26 @@ select it. A grab *on* something still picks it up straight away, so the same
 gesture means "take this" on a thing and "select" in the air. A flat box
 dragged along the desk still reaches things resting on it. (The **Select**
 tool lets a normal pinch stretch the box instead; with the mouse, right-drag.)
-Selected things get a ring; a row of buttons floats above them (duplicate,
-paint with the brush colour, delete, deselect). Grab any of them to move all
+Selected things glow inside one thin outline box; a row of upright buttons
+floats above them (pin to the desk, duplicate, paint with the brush colour,
+delete, deselect). Grab any of them to move all
 of them, use two hands to scale them, drop them on the bin to delete them, or
 tap a grab on empty air to deselect.
 
-**Things that stay on the desk.** Pinned clay prints and photo prints live on
-the desk itself, not in an app: they show everywhere, Home included, and are
-saved for next session.
+**Things that stay on the desk.** Anything you pin (clay prints, Sketch
+strokes, Conjure creations) and photo prints live on the desk itself, not in
+an app: they show everywhere, Home included, and are saved for next session.
+Nothing shows buttons until you want it to: **tap** a thing (a quick pinch on
+it, or a click) and a small pin and delete pair appears above it; tap again,
+or anywhere else, and it goes. That works for desk objects, Clay prints and
+Conjure creations.
 - **Photo prints:** every shot you frame with both hands pops out a small
   photo print where you framed it. Storyboard cards can also be pulled off the
   board to make one. Grab a photo to move it.
-- **Pin:** the pin on a clay print moves it onto the desk, locked in place. The
-  pin on a desk object locks or unlocks it; unlocked, grab it to move it or
-  drop it on the bin.
+- **Pin:** on a Clay print or Conjure creation (or the selection menu, for
+  strokes and anything selected) it moves the thing onto the desk, locked in
+  place. On a desk object it locks or unlocks it; unlocked, grab it to move it
+  or drop it on the bin.
 - **Storyboard cards:** grab one and drop it on another card's place to
   reorder the story.
 
@@ -265,7 +275,8 @@ src/core/window.ts       desk window: tray, handle bar, pin / focus / hide, fold
 src/core/icon-button.ts  round icon buttons (poke, pinch, click, ray); icons.ts draws them
 src/core/rays.ts         far rays that show only on usable targets out of reach
 src/core/selection.ts    box select with live preview, group move/scale, selection menu
-src/core/desk-objects.ts things on the desk in every app: pinned prints, photo prints
+src/core/desk-objects.ts things on the desk in every app: pinned prints, strokes, creations, photos
+src/core/item-actions.ts the pin + delete pair that appears for a tapped thing
 src/core/trash.ts        the desk bin
 src/core/storyboard.ts   storyboard: framed 3D shot cards, ledge buttons, animatic player
 src/core/grab.ts         hand-rotation hold used by every pickable object

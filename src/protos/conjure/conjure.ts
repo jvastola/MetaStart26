@@ -25,6 +25,7 @@ import {
   MeshStandardMaterial,
   type Material,
   type Object3D,
+  Quaternion,
   TorusGeometry,
   Vector3,
 } from '@iwsdk/core';
@@ -40,6 +41,8 @@ import { parseIntent } from './intent.js';
 import { buildFromPrompt } from './kit.js';
 import type { Selectable, SelectionSource } from '../../core/selection.js';
 import { IconButton } from '../../core/icon-button.js';
+import { ItemActions } from '../../core/item-actions.js';
+import { pointerDistance } from '../../core/hands.js';
 import { availableProviders, pollJob, type Provider, startJob } from './remote.js';
 
 type Source = 'sketch' | Provider;
@@ -59,12 +62,16 @@ interface Item {
   shared?: boolean;
   /** -1 = pedestal, 0.. = shelf spot, null = placed by hand. */
   slot: number | null;
+  /** Set when repainted, so a pinned copy keeps the colour. */
+  color?: string;
 }
 
 interface Hold {
   item: Item;
   hand: HandState;
   pose: HeldPose;
+  /** Where it was picked up (a mouse click that does not move it is a tap). */
+  from: Vector3;
 }
 
 const PEDESTAL = new Vector3(0, 0.014, 0);
@@ -139,6 +146,8 @@ export class ConjurePrototype implements Prototype {
   /** Lets a Selection find, move, copy, paint and delete creations. */
   readonly selectionSource: SelectionSource = {
     items: () => this.items.filter((i) => !this.holds.some((h) => h.item === i)).map((i) => this.selectableFor(i)),
+    // Any creation, held ones included: a second hand on a held one scales it.
+    grabbable: (w) => this.items.some((i) => i.holder.getWorldPosition(this.tmp2).distanceTo(w) < 0.08 * Math.max(0.7, i.holder.scale.x) + 0.04),
     remove: (items) => {
       for (const sel of items) {
         const item = this.itemOf(sel);
@@ -158,7 +167,16 @@ export class ConjurePrototype implements Prototype {
     recolor: (items, hex) => {
       for (const sel of items) {
         const item = this.itemOf(sel);
-        if (item) recolor(item.content, hex);
+        if (item) {
+          recolor(item.content, hex);
+          item.color = hex;
+        }
+      }
+    },
+    pin: (items) => {
+      for (const sel of items) {
+        const item = this.itemOf(sel);
+        if (item) this.pinItem(item);
       }
     },
     moved: (items) => {
@@ -169,6 +187,10 @@ export class ConjurePrototype implements Prototype {
     },
   };
   private readonly buttons = new Map<string, IconButton>();
+  /** Pin and delete for the tapped creation. */
+  private itemActions!: ItemActions;
+  private tapped: Item | null = null;
+  private taps: { item: Item; hand: HandState; time: number }[] = [];
 
   constructor(private readonly options: ConjureOptions = {}) {
     this.shelf = options.layout === 'compact' ? SHELF_COMPACT : SHELF;
@@ -231,6 +253,7 @@ export class ConjurePrototype implements Prototype {
         // Selected things stay where they are instead of sliding back to the shelf.
         setLit: (on) => {
           if (on) this.unslot(item);
+          glow(item.content, on, this.accent);
         },
       };
       this.selectables.set(item, sel);
@@ -289,6 +312,20 @@ export class ConjurePrototype implements Prototype {
       this.deskRoot.add(b.group);
     }
     this.setLayout(this.options.layout ?? 'full');
+    this.itemActions = new ItemActions(
+      `conjure-${this.options.layout ?? 'full'}`,
+      this.accent,
+      () => {
+        if (this.tapped) this.pinItem(this.tapped);
+      },
+      () => {
+        if (this.tapped) {
+          Sfx.trash(this.tapped.holder.getWorldPosition(this.tmp));
+          this.remove(this.tapped);
+        }
+      },
+    );
+    this.deskRoot.add(this.itemActions.group);
 
     this.provider = availableProviders()[0] ?? 'sketch';
   }
@@ -338,6 +375,7 @@ export class ConjurePrototype implements Prototype {
       case 'recolor':
         if (!last) return this.create(text);
         recolor(last.content, intent.color);
+        last.color = intent.color;
         this.status = `Made it ${intent.name}.`;
         Sfx.blip(820);
         break;
@@ -430,7 +468,47 @@ export class ConjurePrototype implements Prototype {
     this.status = `Here is your ${item.prompt}, made with ${source}.`;
   }
 
+  /** Hand a creation to the desk: it stays there in every app and next session. */
+  private pinItem(item: Item): void {
+    item.holder.updateMatrixWorld(true);
+    const pos = item.holder.getWorldPosition(new Vector3());
+    const quat = item.holder.getWorldQuaternion(new Quaternion());
+    const scale = item.holder.getWorldScale(new Vector3()).x;
+    this.ctx.deskObjects.addModel(item.prompt, item.variation, item.color ?? null, pos, quat, scale);
+    this.remove(item);
+    this.status = `Pinned the ${item.prompt} to the desk.`;
+  }
+
+  /** Show or hide a creation's pin and delete buttons. */
+  private tapItem(item: Item | null): void {
+    this.tapped = item;
+    if (item) this.itemActions.show(item.holder, () => item.holder.localToWorld(new Vector3(0, 0.15, 0)));
+    else this.itemActions.hide();
+  }
+
+  /** A quick pinch on a creation shows its buttons; a pinch elsewhere hides them. */
+  private updateTaps(dt: number): void {
+    for (const t of this.taps) t.time += dt;
+    for (const hand of this.ctx.pointers) {
+      // A mouse click also starts a grab: that path handles it.
+      if (!hand.tracked || !hand.pinchStarted || (hand.isMouse && hand.grabStarted)) continue;
+      const item = this.items.find((i) => pointerDistance(hand, i.holder.localToWorld(this.tmp.set(0, 0.06, 0))) < 0.07 * Math.max(0.7, i.holder.scale.x));
+      if (item) {
+        this.taps.push({ item, hand, time: 0 });
+        hand.clearEdges();
+      } else if (this.tapped) this.tapItem(null);
+    }
+    for (let i = this.taps.length - 1; i >= 0; i -= 1) {
+      const t = this.taps[i];
+      if (t.hand.pinching && t.hand.tracked) continue;
+      this.taps.splice(i, 1);
+      if (t.time < 0.4 && this.items.includes(t.item)) this.tapItem(this.tapped === t.item ? null : t.item);
+    }
+    this.itemActions.update(this.ctx.camera.getWorldPosition(this.tmp2));
+  }
+
   private remove(item: Item): void {
+    if (this.tapped === item) this.tapItem(null);
     this.items = this.items.filter((i) => i !== item);
     this.holds = this.holds.filter((h) => h.item !== item);
     if (this.generating?.item === item) this.generating = null;
@@ -451,6 +529,7 @@ export class ConjurePrototype implements Prototype {
 
   update(dt: number): void {
     this.panel.update([], dt);
+    this.updateTaps(dt);
     this.updateGestures();
     this.updateGrabs();
     const k = 1 - Math.exp(-dt * 8);
@@ -504,7 +583,7 @@ export class ConjurePrototype implements Prototype {
       // Turning your wrist turns the object while you hold it.
       const pose = new HeldPose();
       pose.begin(hand, item.holder);
-      this.holds.push({ item, hand, pose });
+      this.holds.push({ item, hand, pose, from: item.holder.position.clone() });
       Sfx.pinch(hand.holdPoint);
     }
 
@@ -539,6 +618,11 @@ export class ConjurePrototype implements Prototype {
 
   private release(hold: Hold): void {
     if (this.holds.some((h) => h.item === hold.item)) return;
+    // A click (the mouse grabs and pinches at once) that did not move it: show its buttons.
+    if (hold.hand.isMouse && hold.item.holder.position.distanceTo(hold.from) < 0.01) {
+      this.tapItem(this.tapped === hold.item ? null : hold.item);
+      return;
+    }
     if (this.ctx.trash.take(hold.hand.holdPoint)) {
       this.remove(hold.item);
       this.status = `Threw away the ${hold.item.prompt}.`;
@@ -668,7 +752,28 @@ export class ConjurePrototype implements Prototype {
   };
 }
 
-function recolor(object: Object3D, hex: string): void {
+/** Make a creation glow while it is selected (and back). */
+function glow(object: Object3D, on: boolean, hex: string): void {
+  object.traverse((o) => {
+    const mesh = o as Mesh;
+    if (!mesh.isMesh) return;
+    for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+      const std = m as MeshStandardMaterial;
+      if (!std.emissive) continue;
+      if (on) {
+        std.userData.emissive ??= [std.emissive.getHex(), std.emissiveIntensity];
+        std.emissive.set(hex);
+        std.emissiveIntensity = 0.35;
+      } else if (std.userData.emissive) {
+        std.emissive.setHex(std.userData.emissive[0]);
+        std.emissiveIntensity = std.userData.emissive[1];
+        delete std.userData.emissive;
+      }
+    }
+  });
+}
+
+export function recolor(object: Object3D, hex: string): void {
   const swapped = new Map<Material, Material>();
   const swap = (m: Material): Material => {
     let next = swapped.get(m);

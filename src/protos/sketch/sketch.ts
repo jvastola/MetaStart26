@@ -76,7 +76,7 @@ const MAX_SCALE = 5;
 
 type HistoryEntry = { kind: 'add'; stroke: Stroke } | { kind: 'remove'; strokes: Stroke[] };
 
-class Stroke {
+export class Stroke {
   readonly group = new Group();
   readonly points: Vector3[] = [];
   private readonly joints: InstancedMesh;
@@ -235,6 +235,8 @@ export class SketchPrototype implements Prototype {
   /** Lets a Selection find, move, copy, paint and delete strokes. */
   readonly selectionSource: SelectionSource = {
     items: () => this.strokes.filter((st) => !this.isBusy(st)).map((st) => this.selectableFor(st)),
+    // Any stroke, held ones included: a second hand grabbing a held stroke scales it.
+    grabbable: (w) => this.strokes.some((st) => st.distanceTo(w) - st.worldRadius < 0.03),
     remove: (items) => this.removeStrokes(items.map((i) => this.strokeOf(i)).filter((st): st is Stroke => st != null)),
     duplicate: (items) => {
       const copies: Selectable[] = [];
@@ -262,6 +264,26 @@ export class SketchPrototype implements Prototype {
       this.moves += 1;
       this.saveTimer = 0.8;
     },
+    // Hand strokes over to the desk, where they stay in every app.
+    pin: (items) => {
+      for (const item of items) {
+        const st = this.strokeOf(item);
+        if (!st) continue;
+        st.group.updateMatrixWorld(true);
+        const pts = new Float32Array(st.points.length * 3);
+        st.points.forEach((p, i) => pts.set([p.x, p.y, p.z], i * 3));
+        this.ctx.deskObjects.addStroke(
+          pts,
+          st.color,
+          st.radius,
+          st.group.getWorldPosition(new Vector3()),
+          st.group.getWorldQuaternion(new Quaternion()),
+          st.group.getWorldScale(new Vector3()).x,
+        );
+        this.disposeStroke(st);
+      }
+      this.saveTimer = 0.5;
+    },
   };
   private strokes: Stroke[] = [];
   private live = new Map<HandState, { stroke: Stroke; smooth: Vector3 }>();
@@ -287,7 +309,10 @@ export class SketchPrototype implements Prototype {
   drawEnabled = true;
   private wheel!: ColorWheel;
   private colorHex = '#7fe0b5';
-  private size = 1;
+  /** Brush radius (m). Tap Size to step through presets; hold it to slide. */
+  private brushRadius = SIZES[1].r;
+  /** How close the eraser must come to a stroke (m). Hold Erase to slide. */
+  private eraseReach = ERASE_REACH;
   private dirty = false;
   private saveTimer = 0;
   private readonly tmp = new Vector3();
@@ -320,10 +345,31 @@ export class SketchPrototype implements Prototype {
       ['undo', 'undo', 'Undo'],
       ['clear', 'trash', 'Clear all'],
     ];
+    const brushRange = [0.0015, 0.014];
+    const eraseRange = [0.005, 0.05];
     tools.forEach(([id, icon, label], i) => {
       const b = new IconButton({ id: `sketch:${id}`, icon, label, accent: this.accent, radius: 0.016 });
       b.group.position.set(((i % 3) - 1) * 0.045, 0.001, (Math.floor(i / 3) - 0.5) * 0.045);
       b.onPress = () => this.onButton(id);
+      // Press and hold: Size slides the brush width, Erase the eraser size.
+      if (id === 'size') {
+        b.hold = {
+          get: () => (this.brushRadius - brushRange[0]) / (brushRange[1] - brushRange[0]),
+          set: (v) => (this.brushRadius = brushRange[0] + v * (brushRange[1] - brushRange[0])),
+          label: () => `Brush ${(this.brushRadius * 2000).toFixed(0)} mm`,
+        };
+      }
+      if (id === 'erase') {
+        b.hold = {
+          get: () => (this.eraseReach - eraseRange[0]) / (eraseRange[1] - eraseRange[0]),
+          set: (v) => {
+            this.eraseReach = eraseRange[0] + v * (eraseRange[1] - eraseRange[0]);
+            this.erasing = true;
+            this.selecting = false;
+          },
+          label: () => `Eraser ${(this.eraseReach * 100).toFixed(1)} cm`,
+        };
+      }
       this.buttons.set(id, b);
       this.toolsRoot.add(b.group);
     });
@@ -483,7 +529,7 @@ export class SketchPrototype implements Prototype {
   private updateEraser(hand: HandState): void {
     if (!hand.tracked || !hand.pinching || this.held.has(hand)) return;
     if (hand.pinchStarted && (CanvasPanel.anyContains(hand.pinchPoint, 0.05) || this.onWheel(hand))) return;
-    const hit = this.strokes.filter((s) => !this.isBusy(s) && s.distanceTo(hand.pinchPoint) - s.worldRadius < ERASE_REACH);
+    const hit = this.strokes.filter((s) => !this.isBusy(s) && s.distanceTo(hand.pinchPoint) - s.worldRadius < this.eraseReach);
     if (hit.length === 0) return;
     this.removeStrokes(hit);
     this.erased += hit.length;
@@ -536,7 +582,7 @@ export class SketchPrototype implements Prototype {
       // Pinches on any other showing panel (Conjure in Studio, say) press it instead.
       if (CanvasPanel.anyContains(hand.pinchPoint, 0.05)) return;
       if (this.wheel.active || this.onWheel(hand)) return;
-      const stroke = new Stroke(this.colorHex, SIZES[this.size].r);
+      const stroke = new Stroke(this.colorHex, this.brushRadius);
       this.deskRoot.add(stroke.group);
       this.strokes.push(stroke);
       const start = this.deskRoot.worldToLocal(this.tmp.copy(hand.pinchPoint));
@@ -635,7 +681,11 @@ export class SketchPrototype implements Prototype {
   }
 
   private onButton(id: string): void {
-    if (id === 'size') this.size = (this.size + 1) % SIZES.length;
+    if (id === 'size') {
+      // Next preset up from the current width, wrapping round.
+      const next = SIZES.find((p) => p.r > this.brushRadius + 1e-4) ?? SIZES[0];
+      this.brushRadius = next.r;
+    }
     if (id === 'color') this.wheel.mesh.visible = !this.wheel.mesh.visible;
     if (id === 'undo') this.undo();
     if (id === 'clear') this.clear();
@@ -647,6 +697,10 @@ export class SketchPrototype implements Prototype {
       this.selecting = !this.selecting;
       if (this.selecting) this.erasing = false;
     }
+  }
+
+  private sizeName(): string {
+    return SIZES.reduce((a, p) => (Math.abs(p.r - this.brushRadius) < Math.abs(a.r - this.brushRadius) ? p : a)).name;
   }
 
   /** The current brush colour (for painting a selection). */
@@ -676,7 +730,8 @@ export class SketchPrototype implements Prototype {
     set('select', this.selecting);
     set('undo', false, this.history.length === 0);
     set('clear', false, this.strokes.length === 0);
-    this.buttons.get('size')!.label = `Brush: ${SIZES[this.size].name}`;
+    this.buttons.get('size')!.label = `Brush ${(this.brushRadius * 2000).toFixed(0)} mm (hold to slide)`;
+    this.buttons.get('erase')!.label = this.erasing ? 'Erase on (hold to set size)' : 'Erase (hold to set size)';
   }
 
   // ------------------------------------------------------------ persistence
@@ -728,7 +783,9 @@ export class SketchPrototype implements Prototype {
       color: this.colorHex,
       wheel: this.wheel.debug(),
       wheelVisible: this.wheel.mesh.visible,
-      size: SIZES[this.size].name,
+      size: this.sizeName(),
+      brushRadius: +this.brushRadius.toFixed(4),
+      eraseReach: +this.eraseReach.toFixed(3),
     };
   }
 

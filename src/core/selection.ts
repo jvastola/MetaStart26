@@ -12,8 +12,9 @@
  *              follows your hand and turns with your wrist.
  *   Scale    - grab the selection with both hands and pull apart / twist.
  *   Delete   - drop it on the desk bin, or press the bin button.
- *   Menu     - round buttons float above the selection: duplicate, paint
- *              with the brush colour, delete, deselect.
+ *   Menu     - round buttons float above the selection: pin to the desk,
+ *              duplicate, paint with the brush colour, delete, deselect.
+ *   Show     - selected things glow, and one thin box outlines the lot.
  *   Clear    - a quick grab or pinch on empty space deselects.
  *
  * Tools take part by registering a SelectionSource.
@@ -39,6 +40,7 @@ import {
 import type { LabContext } from './context.js';
 import type { HandState } from './hands.js';
 import { IconButton } from './icon-button.js';
+import { faceViewer } from './item-actions.js';
 import { Sfx } from './sfx.js';
 
 export interface Selectable {
@@ -60,6 +62,8 @@ export interface SelectionSource {
   recolor?(items: Selectable[], hex: string): void;
   /** Called after a move or scale, e.g. to save. */
   moved?(items: Selectable[]): void;
+  /** Hand these over to the desk, where they stay in every app. */
+  pin?(items: Selectable[]): void;
 }
 
 /** The selection box is never thinner than this on any side (m). */
@@ -102,7 +106,8 @@ export class Selection {
   /** Grabs that began on empty air: a loop once held or moved, a deselect if just tapped. */
   private readonly air = new Map<HandState, { time: number; at: Vector3 }>();
   private hold: GroupHold | null = null;
-  private readonly halos = new Map<Selectable, Mesh>();
+  /** One thin box around the whole selection (desk-aligned). */
+  private readonly outline: LineSegments;
   private readonly menu = new Group();
   private readonly buttons: IconButton[] = [];
   private readonly pinchStart = new Map<HandState, { time: number; at: Vector3 }>();
@@ -113,7 +118,7 @@ export class Selection {
   private readonly m = new Matrix4();
   private readonly q = new Quaternion();
 
-  private readonly haloMat: MeshBasicMaterial;
+
 
   constructor(
     private readonly ctx: LabContext,
@@ -127,8 +132,9 @@ export class Selection {
     this.box.renderOrder = this.boxEdges.renderOrder = 34;
     this.box.frustumCulled = this.boxEdges.frustumCulled = false;
     this.box.visible = this.boxEdges.visible = false;
-    this.haloMat = new MeshBasicMaterial({ color: new Color(accent), transparent: true, opacity: 0.55, depthWrite: false });
+
     const menu: [string, string, string, () => void][] = [
+      ['sel:pin', 'pin', 'Pin to the desk (stays in every app)', () => this.pinAll()],
       ['sel:duplicate', 'duplicate', 'Duplicate', () => this.duplicate()],
       ['sel:paint', 'colour', 'Paint with brush colour', () => this.paint()],
       ['sel:delete', 'trash', 'Delete', () => this.removeAll()],
@@ -142,7 +148,10 @@ export class Selection {
       this.menu.add(b.group);
     });
     this.menu.visible = false;
-    this.group.add(this.menu, this.box, this.boxEdges);
+    this.outline = new LineSegments(new EdgesGeometry(new BoxGeometry(1, 1, 1)), new LineBasicMaterial({ color: accent, transparent: true, opacity: 0.5 }));
+    this.outline.frustumCulled = false;
+    this.outline.visible = false;
+    this.group.add(this.menu, this.box, this.boxEdges, this.outline);
     // Children are placed in world coordinates wherever the group is parented.
     this.group.matrixAutoUpdate = false;
   }
@@ -454,25 +463,13 @@ export class Selection {
   // ------------------------------------------------------------ actions
 
   setItems(items: Selectable[]): void {
-    for (const [item, halo] of this.halos) {
-      if (items.includes(item)) continue;
-      item.setLit?.(false);
-      halo.removeFromParent();
-      halo.geometry.dispose();
-      this.halos.delete(item);
-    }
+    for (const item of this.items) if (!items.includes(item)) item.setLit?.(false);
     this.items = items;
-    for (const item of items) {
-      item.setLit?.(true);
-      if (this.halos.has(item)) continue;
-      const halo = new Mesh(new RingGeometry(0.96, 1, 48), this.haloMat);
-      halo.renderOrder = 35;
-      this.group.add(halo);
-      this.halos.set(item, halo);
-    }
+    for (const item of items) item.setLit?.(true);
     if (items.length === 0) {
       this.hold = null;
       this.menu.visible = false;
+      this.outline.visible = false;
     }
   }
 
@@ -503,6 +500,16 @@ export class Selection {
     Sfx.whoosh();
   }
 
+  private pinAll(): void {
+    const items = this.items;
+    this.setItems([]);
+    for (const source of this.sources) {
+      const mine = items.filter((i) => i.source === source);
+      if (mine.length) source.pin?.(mine);
+    }
+    Sfx.blip(900);
+  }
+
   private paint(): void {
     const hex = this.paintColor();
     for (const source of this.sources) {
@@ -512,34 +519,35 @@ export class Selection {
     Sfx.blip(820);
   }
 
-  /** Halos around each selected thing, menu above the whole selection, all facing you. */
+  /** One outline box around the selection, and the menu above it, facing you. */
   private layoutMenu(): void {
-    // The eye: the camera, which is right in both XR and the desktop view.
-    const head = this.ctx.camera.getWorldPosition(this.eye);
-    let top = -Infinity;
-    const center = new Vector3();
-    for (const [item, halo] of this.halos) {
-      const r = item.bounds(this.tmp);
-      halo.position.copy(this.tmp);
-      halo.scale.setScalar(r + 0.012);
-      halo.lookAt(head);
-      center.add(this.tmp);
-      top = Math.max(top, this.tmp.y + r);
-    }
+    const eye = this.ctx.camera.getWorldPosition(this.eye);
+    const showOutline = this.active && !this.lasso;
+    this.outline.visible = showOutline;
     this.menu.visible = this.active && !this.hold && !this.lasso;
-    if (!this.menu.visible) return;
-    center.multiplyScalar(1 / this.halos.size);
-    this.menu.position.set(center.x, top + 0.05, center.z);
-    // Face the buttons (their +Y) toward the viewer.
-    const toHead = this.tmp.copy(head).sub(this.menu.position).normalize();
-    this.menu.quaternion.setFromUnitVectors(UP, toHead);
-    // Keep the row level: twist about the facing axis so local X stays horizontal.
-    const x = new Vector3(1, 0, 0).applyQuaternion(this.menu.quaternion);
-    const wantX = new Vector3(-toHead.z, 0, toHead.x).normalize();
-    if (wantX.lengthSq() > 0.5) {
-      const angle = Math.atan2(new Vector3().crossVectors(x, wantX).dot(toHead), x.dot(wantX));
-      this.menu.quaternion.premultiply(this.q.setFromAxisAngle(toHead, angle));
+    if (!showOutline) return;
+    // Union of the things' bounds, in desk space.
+    const lo = new Vector3(Infinity, Infinity, Infinity);
+    const hi = new Vector3(-Infinity, -Infinity, -Infinity);
+    for (const item of this.items) {
+      const r = item.bounds(this.tmp);
+      const p = this.toDesk(this.tmp, this.tmp2);
+      lo.min(this.tmp.set(p.x - r, p.y - r, p.z - r));
+      hi.max(this.tmp.set(p.x + r, p.y + r, p.z + r));
     }
+    lo.subScalar(0.008);
+    hi.addScalar(0.008);
+    const desk = this.ctx.desk;
+    desk.updateMatrixWorld(true);
+    this.outline.position.copy(desk.localToWorld(this.tmp.copy(lo).add(hi).multiplyScalar(0.5)));
+    desk.getWorldQuaternion(this.outline.quaternion);
+    const scale = desk.getWorldScale(this.tmp2);
+    this.outline.scale.set((hi.x - lo.x) * scale.x, (hi.y - lo.y) * scale.y, (hi.z - lo.z) * scale.z);
+    if (!this.menu.visible) return;
+    // The menu floats above the middle of the box, upright and facing you.
+    const top = desk.localToWorld(this.tmp.set((lo.x + hi.x) / 2, hi.y + 0.04, (lo.z + hi.z) / 2));
+    this.menu.position.copy(top);
+    faceViewer(top, eye, this.menu.quaternion);
   }
 
   debug(): { count: number; holding: number; lasso: boolean; caught: number; airGrab: number } {

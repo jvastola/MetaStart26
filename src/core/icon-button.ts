@@ -8,9 +8,14 @@
  * consumed, so the app does not also react to it.
  *
  * The button's face points along its group's local +Y.
+ *
+ * Buttons with a `hold` setting also work as sliders: press and hold for a
+ * moment and a slider pops out of the button; move sideways to change the
+ * value, let go to finish. A quick press still does the normal thing.
  */
 
 import {
+  BoxGeometry,
   CanvasTexture,
   CircleGeometry,
   CylinderGeometry,
@@ -31,6 +36,19 @@ import { Sfx } from './sfx.js';
 
 const HEIGHT = 0.008;
 const COOLDOWN = 0.3;
+/** Hold this long to turn a press into a slider. */
+const HOLD_TIME = 0.35;
+/** Sideways travel for the whole slider range (m). */
+const SLIDE = 0.16;
+
+/** A value a button can slide when pressed and held. */
+export interface HoldSlider {
+  /** Current value, 0..1. */
+  get(): number;
+  set(v: number): void;
+  /** Text shown above the knob. */
+  label(v: number): string;
+}
 
 export interface IconButtonOptions {
   id: string;
@@ -79,6 +97,16 @@ export class IconButton {
   private push = 0;
   private readonly local = new Vector3();
   private readonly q = new Quaternion();
+  /** Set to make press-and-hold slide a value. */
+  hold: HoldSlider | null = null;
+  private gesture: { pointer: HandState; via: 'pinch' | 'poke' | 'mouse'; time: number; x0: number; v0: number; sliding: boolean } | null = null;
+  private slider: Group | null = null;
+  private sliderFill: Mesh | null = null;
+  private sliderKnob: Mesh | null = null;
+  private sliderLabel: Mesh | null = null;
+  private sliderCanvas: HTMLCanvasElement | null = null;
+  private sliderTexture: CanvasTexture | null = null;
+  private sliderText = '';
 
   constructor(opts: IconButtonOptions) {
     this.id = opts.id;
@@ -228,11 +256,124 @@ export class IconButton {
     return t;
   }
 
+  /** Pointer x along the button (local), for the slider. */
+  private localX(g: NonNullable<IconButton['gesture']>): number | null {
+    const p = g.pointer;
+    if (g.via === 'mouse') {
+      const o = this.group.worldToLocal(this.local.copy(p.rayOrigin)).clone();
+      const d = this.group.worldToLocal(this.local.copy(p.rayOrigin).add(p.rayDir)).sub(o);
+      if (Math.abs(d.y) < 1e-6) return null;
+      const t = (HEIGHT - o.y) / d.y;
+      return o.x + d.x * t;
+    }
+    return this.group.worldToLocal(this.local.copy(g.via === 'pinch' ? p.pinchPoint : p.indexTip)).x;
+  }
+
+  /** A press or hold in progress on a button with a slider. */
+  private updateHold(dt: number): void {
+    const g = this.gesture!;
+    const p = g.pointer;
+    g.time += dt;
+    const still =
+      p.tracked &&
+      (g.via === 'mouse' ? p.pinching || p.grabbing : g.via === 'pinch' ? p.pinching : this.group.worldToLocal(this.local.copy(p.indexTip)).y < HEIGHT + 0.03);
+    const x = this.localX(g);
+    if (!still) {
+      this.gesture = null;
+      if (g.sliding) {
+        this.showSlider(false);
+        Sfx.place(this.group.getWorldPosition(this.local));
+      } else this.press();
+      return;
+    }
+    if (!g.sliding && g.time > HOLD_TIME) {
+      g.sliding = true;
+      g.x0 = x ?? 0;
+      g.v0 = this.hold!.get();
+      this.showSlider(true);
+      Sfx.blip(980, this.group.getWorldPosition(this.local));
+    }
+    if (g.sliding && x != null) {
+      const v = Math.min(1, Math.max(0, g.v0 + (x - g.x0) / SLIDE));
+      if (Math.abs(v - this.hold!.get()) > 1e-4) this.hold!.set(v);
+      this.layoutSlider(g.x0, g.v0);
+    }
+  }
+
+  private buildSlider(): void {
+    const slider = new Group();
+    const track = new Mesh(new BoxGeometry(SLIDE, 0.003, 0.006), new MeshStandardMaterial({ color: '#3a404c' }));
+    this.sliderFill = new Mesh(new BoxGeometry(1, 0.0035, 0.0065), new MeshBasicMaterial({ color: this.accent }));
+    this.sliderKnob = new Mesh(new CylinderGeometry(0.008, 0.008, 0.006, 20), new MeshStandardMaterial({ color: '#f4f5f7', emissive: this.accent, emissiveIntensity: 0.4 }));
+    this.sliderCanvas = document.createElement('canvas');
+    this.sliderCanvas.width = 320;
+    this.sliderCanvas.height = 72;
+    this.sliderTexture = new CanvasTexture(this.sliderCanvas);
+    this.sliderTexture.colorSpace = SRGBColorSpace;
+    this.sliderLabel = new Mesh(new PlaneGeometry(0.08, 0.018), new MeshBasicMaterial({ map: this.sliderTexture, transparent: true, depthTest: false }));
+    this.sliderLabel.renderOrder = 26;
+    slider.add(track, this.sliderFill, this.sliderKnob, this.sliderLabel);
+    slider.position.y = HEIGHT + 0.014;
+    slider.userData.hideInShots = true;
+    this.slider = slider;
+    this.group.add(slider);
+  }
+
+  private showSlider(on: boolean): void {
+    if (on && !this.slider) this.buildSlider();
+    if (this.slider) this.slider.visible = on;
+    this.tip.visible = false;
+  }
+
+  /** The track is centred where the value started, so the knob begins under your finger. */
+  private layoutSlider(x0: number, v0: number): void {
+    if (!this.slider || !this.hold) return;
+    const v = this.hold.get();
+    this.slider.position.x = x0 - (v0 - 0.5) * SLIDE;
+    const kx = (v - 0.5) * SLIDE;
+    this.sliderKnob!.position.x = kx;
+    this.sliderFill!.scale.x = Math.max(0.0001, v * SLIDE);
+    this.sliderFill!.position.x = -SLIDE / 2 + (v * SLIDE) / 2;
+    this.sliderLabel!.position.set(kx, 0.025, 0);
+    const text = this.hold.label(v);
+    if (text !== this.sliderText) {
+      this.sliderText = text;
+      const c = this.sliderCanvas!.getContext('2d')!;
+      c.clearRect(0, 0, 320, 72);
+      c.font = '700 40px system-ui, sans-serif';
+      const tw = Math.min(312, c.measureText(text).width + 40);
+      c.fillStyle = 'rgba(20,22,27,0.92)';
+      c.beginPath();
+      c.roundRect?.((320 - tw) / 2, 4, tw, 64, 28);
+      c.fill();
+      c.fillStyle = '#f4f5f7';
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      c.fillText(text, 160, 38);
+      this.sliderTexture!.needsUpdate = true;
+    }
+  }
+
+  /** Begin a press on a button that can also slide. */
+  private begin(p: HandState, via: 'pinch' | 'poke' | 'mouse'): void {
+    if (this.cooldown > 0) return;
+    this.gesture = { pointer: p, via, time: 0, x0: 0, v0: 0, sliding: false };
+    this.push = 1;
+  }
+
+  /** True while this button is being held or slid. */
+  get busy(): boolean {
+    return this.gesture != null;
+  }
+
   update(pointers: readonly HandState[], head: Vector3, dt: number): void {
     this.cooldown = Math.max(0, this.cooldown - dt);
     this.rayHover = Math.max(0, this.rayHover - dt);
     let hover = this.rayHover > 0;
-    if (!this._disabled) {
+    if (this.gesture) {
+      this.updateHold(dt);
+      hover = true;
+    } else if (!this._disabled) {
       this.group.updateMatrixWorld(true);
       for (const p of pointers) {
         if (!p.tracked) continue;
@@ -241,7 +382,8 @@ export class IconButton {
           if (t != null) {
             hover = true;
             if (p.pinchStarted || p.grabStarted) {
-              this.press();
+              if (this.hold) this.begin(p, 'mouse');
+              else this.press();
               p.clearEdges();
             }
           }
@@ -259,13 +401,15 @@ export class IconButton {
         else if (tip.y > HEIGHT + 0.012) this.lastY.set(p, 1);
         else if (armed > 0 && tip.y <= HEIGHT + 0.006 && tip.y > -0.02) {
           this.lastY.set(p, 0);
-          this.press();
+          if (this.hold) this.begin(p, 'poke');
+          else this.press();
         }
         // Or pinch on it.
         if (p.pinchStarted) {
           const q = this.group.worldToLocal(this.local.copy(p.pinchPoint));
           if (Math.hypot(q.x, q.z) < this.radius * 1.5 && Math.abs(q.y - HEIGHT) < 0.03) {
-            this.press();
+            if (this.hold) this.begin(p, 'pinch');
+            else this.press();
             p.clearEdges();
           }
         }
@@ -274,12 +418,13 @@ export class IconButton {
     if (hover && !this.hovered && pointers.some((p) => !p.isMouse && p.tracked)) Sfx.hover(this.group.getWorldPosition(this.local));
     this.hovered = hover;
     this.hoverAmount += ((hover ? 1 : 0) - this.hoverAmount) * Math.min(1, dt * 14);
-    this.push = Math.max(0, this.push - dt * 6);
+    this.push = this.gesture ? 1 : Math.max(0, this.push - dt * 6);
     this.cap.scale.y = 1 - this.push * 0.5;
     this.cap.position.y = (HEIGHT * this.cap.scale.y) / 2;
     this.face.position.y = HEIGHT * this.cap.scale.y + 0.0004;
     this.ringMat.opacity = Math.max(this._active ? 0.9 : 0, this.hoverAmount * 0.8);
-    this.tip.visible = this.hoverAmount > 0.3;
+    this.tip.visible = this.hoverAmount > 0.3 && !(this.gesture?.sliding ?? false);
+    if (this.slider?.visible) this.sliderLabel!.lookAt(head.x, head.y, head.z);
     if (this.tip.visible) {
       // Face the viewer.
       this.tip.lookAt(head.x, head.y, head.z);

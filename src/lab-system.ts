@@ -576,7 +576,7 @@ export class LabSystem extends createSystem({
     // buttons can sit right next to the desk's own move bar).
     IconButton.updateAll(this.ctx.pointers, this.camera.getWorldPosition(this.eye), dt);
     // Things pinned to the desk come next: a grab on one never reaches the app.
-    this.deskObjects.update(this.ctx.pointers, dt);
+    this.deskObjects.update(this.ctx.pointers, dt, this.eye);
     this.updateDeskGrab();
     this.updateWristMenu(dt);
     this.updateCoach(dt);
@@ -1035,8 +1035,10 @@ export class LabSystem extends createSystem({
         const o = this.deskObjects.objects[i];
         if (!o) return null;
         const c = o.center(new Vector3());
-        return { x: c.x, y: c.y, z: c.z, pin: o.pinButton.id };
+        return { x: c.x, y: c.y, z: c.z };
       },
+      /** Show a desk object's pin/delete buttons (as a tap would). */
+      deskSelect: (i: number) => this.deskObjects.select(this.deskObjects.objects[i] ?? null),
       /** Trash bin: world position of its mouth, items thrown away, shown. */
       trash: () => {
         this.desk.updateMatrixWorld(true);

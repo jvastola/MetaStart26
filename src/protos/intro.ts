@@ -509,7 +509,7 @@ export class IntroPrototype implements Prototype {
   // ------------------------------------------------------------ tests
 
   debugState(): unknown {
-    return { step: this.step, dialTurn: +this.dialTurn.toFixed(2), carrying: this.carry != null, lastDrop: this.lastDrop, selection: this.selection.debug() };
+    return { step: this.step, dialTurn: +this.dialTurn.toFixed(2), twisting: this.twist != null, carrying: this.carry != null, lastDrop: this.lastDrop, selection: this.selection.debug() };
   }
 
   debugActions = {
