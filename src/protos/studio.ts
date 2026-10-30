@@ -1,50 +1,67 @@
 /**
- * Studio: a small desk OS. A dock on the left opens tools as windows:
+ * Studio: a small desk OS. A dock of round buttons on the left opens tools
+ * as windows:
  *
- *   Draw     - the Sketch toolbar; while it is open, a pinch draws in the air
+ *   Draw     - drawing tools; while it is open, a pinch draws in the air
  *   Conjure  - voice/typed 3D objects on a pedestal
  *   Clay     - the sculpting turntable, with Print copy
  *   Board    - the storyboard that collects two-hand shots
  *
- * Several can be open at once. Each window has a handle bar along its front:
- * pinch or grab it to move the window, poke the red button to close it. The
- * layout is saved. Strokes, creations and prints live on the desk itself, so
- * closing or moving a tool leaves them where they are. The desk's bin deletes
- * anything dropped in it.
+ * Keeping it tidy:
+ *   - each window's bar has pin, focus and hide buttons;
+ *   - unpinned windows fold their controls away while no hand is near, and
+ *     unfold as you reach toward them;
+ *   - focus gives one tool the desk: the others hide, the tool moves to the
+ *     middle and shows its full controls; press focus again to go back.
  *
- * Who gets a gesture: window handles first, then Clay, then Conjure, and
- * Sketch last. A tool that takes a pinch or grab consumes it, so a grab on a
- * creation never also grabs the stroke behind it.
+ * Strokes, creations and prints live on the desk, not in the windows. Loop
+ * around any of them (Select tool, or a quick double pinch) to select them
+ * together; grab to move, both hands to scale, the bin or menu to delete.
+ *
+ * Who gets a gesture: window bars, then the selection, then Clay, Conjure,
+ * and Sketch last. A tool that takes a pinch or grab consumes it.
  */
 
-import { Group, Vector3 } from '@iwsdk/core';
-import { ACCENTS } from '../core/art.js';
+import { CanvasTexture, Group, Mesh, MeshBasicMaterial, PlaneGeometry, SRGBColorSpace, Vector3 } from '@iwsdk/core';
+import { ACCENTS, withAlpha } from '../core/art.js';
 import { type LabContext, type Prototype, store } from '../core/context.js';
 import type { HandState } from '../core/hands.js';
-import { CanvasPanel, type PanelButton } from '../core/panel.js';
+import { IconButton } from '../core/icon-button.js';
+import { roundRect } from '../core/panel.js';
+import { Selection } from '../core/selection.js';
 import { Sfx } from '../core/sfx.js';
 import { StoryboardWall } from '../core/storyboard.js';
-import { DeskWindow } from '../core/window.js';
+import { DeskWindow, type WindowOptions } from '../core/window.js';
 import { ClayPrototype } from './clay/clay.js';
 import { ConjurePrototype } from './conjure/conjure.js';
 import { SketchPrototype } from './sketch/sketch.js';
 
-const LAYOUT_KEY = 'studio-layout-v1';
+const LAYOUT_KEY = 'studio-layout-v2';
 
 type WindowId = 'draw' | 'conjure' | 'clay' | 'board';
+const WINDOW_IDS: WindowId[] = ['draw', 'conjure', 'clay', 'board'];
 
 interface SavedWindow {
   open: boolean;
   p: [number, number, number];
   yaw: number;
+  pinned?: boolean;
 }
 
 /** Where windows start, desk-local (+Z toward you), and whether they start open. */
 const DEFAULTS: Record<WindowId, SavedWindow> = {
-  draw: { open: true, p: [0.57, 0, 0.0], yaw: -0.8 },
+  draw: { open: true, p: [0.5, 0, 0.06], yaw: -0.6 },
   conjure: { open: true, p: [0.215, 0, -0.03], yaw: 0 },
   clay: { open: false, p: [-0.225, 0, -0.03], yaw: 0 },
   board: { open: true, p: [0, 0.36, -0.36], yaw: 0 },
+};
+
+/** Where a focused tool goes. */
+const FOCUS_POSE: Record<WindowId, [number, number, number] | null> = {
+  draw: null,
+  conjure: [0, 0, -0.03],
+  clay: [0, 0, -0.03],
+  board: [0, 0.3, -0.24],
 };
 
 export class StudioPrototype implements Prototype {
@@ -54,78 +71,145 @@ export class StudioPrototype implements Prototype {
   readonly accent = ACCENTS.studio;
   readonly trash = true;
   readonly howTo = [
-    'The dock on the left opens tools: Draw, Conjure, Clay, Board.',
-    "Pinch or grab a window's bar to move it; the red button closes it.",
-    'Pinch to draw, grab to move things, bin to delete, two hands for a shot.',
+    'Round buttons on the left open tools. Point at one to see its name.',
+    'Window bars: pin keeps controls out, focus gives a tool the desk.',
+    'Double pinch and loop around things to select them; grab to move.',
   ];
   readonly deskRoot = new Group();
   readonly wallRoot = new Group();
 
   private ctx!: LabContext;
-  private dock!: CanvasPanel;
   private board!: StoryboardWall;
+  private selection!: Selection;
   private status = '';
   private readonly windows = new Map<WindowId, DeskWindow>();
+  private readonly dock = new Map<string, IconButton>();
+  private focusState: { id: WindowId; saved: Record<WindowId, SavedWindow> } | null = null;
   private readonly sketch = new SketchPrototype({
     saveKey: 'studio-sketch-v1',
-    heading: 'Draw',
-    // Window-local: the toolbar faces you, the colour wheel sits on its left.
-    panel: { position: [0, 0.1, 0], rotation: [-0.35, 0, 0] },
-    wheel: { position: [-0.27, 0.11, 0.03], rotation: [-0.3, 0.45, 0], visible: false },
+    // Window-local: the round tools, with the colour wheel just behind them.
+    tools: { position: [0, 0, 0], rotation: [0, 0, 0] },
+    wheel: { position: [0, 0.12, -0.07], rotation: [-0.25, 0, 0], visible: false },
     // Conjure owns the thumb microgestures here (tap = speak).
     gestures: false,
+    selection: () => this.selection,
   });
   private readonly conjure = new ConjurePrototype({ layout: 'compact' });
   private readonly clay = new ClayPrototype({ keyPrefix: 'studio-', layout: 'compact', gestures: false, printsParent: this.deskRoot });
 
   init(ctx: LabContext): void {
     this.ctx = ctx;
+    this.selection = new Selection(ctx, this.accent);
+    this.selection.armed = () => this.sketch.selecting;
+    this.selection.paintColor = () => this.sketch.brushColor;
     this.sketch.init(ctx);
     this.conjure.init(ctx);
     this.clay.init(ctx);
+    this.selection.addSource(this.conjure.selectionSource);
+    this.selection.addSource(this.clay.selectionSource);
     // Strokes live on the desk, outside every window.
-    this.deskRoot.add(this.sketch.deskRoot);
+    this.deskRoot.add(this.sketch.deskRoot, this.selection.group);
     this.wallRoot.add(this.sketch.wallRoot, this.conjure.wallRoot, this.clay.wallRoot);
 
-    const draw = this.addWindow({ id: 'draw', title: 'Draw', accent: ACCENTS.sketch, handle: { position: [0, 0.008, 0.075], length: 0.22 } });
+    const draw = this.addWindow({
+      id: 'draw',
+      title: 'Draw',
+      accent: ACCENTS.sketch,
+      tray: { width: 0.16, depth: 0.11, z: 0 },
+      handle: { position: [0, 0.006, 0.07], length: 0.12 },
+      reach: { center: [0, 0.03, 0], radius: 0.1 },
+    });
     draw.content.add(this.sketch.toolsRoot);
+    draw.onExpand = (on) => (this.sketch.toolsRoot.visible = on && draw.open);
+
     const conjure = this.addWindow({
       id: 'conjure',
       title: 'Conjure',
       accent: ACCENTS.conjure,
       tray: { width: 0.46, depth: 0.4, z: -0.03 },
       handle: { position: [0, 0.008, 0.155], length: 0.24 },
+      reach: { center: [0, 0.06, -0.03], radius: 0.22 },
     });
     conjure.content.add(this.conjure.deskRoot);
+    conjure.onExpand = (on) => (this.conjure.panelMesh.visible = on);
+
     const clay = this.addWindow({
       id: 'clay',
       title: 'Clay',
       accent: ACCENTS.clay,
-      tray: { width: 0.42, depth: 0.44, z: -0.01 },
-      handle: { position: [0, 0.008, 0.195], length: 0.2 },
+      tray: { width: 0.42, depth: 0.46, z: -0.02 },
+      handle: { position: [0, 0.008, 0.2], length: 0.2 },
+      reach: { center: [0, 0.07, 0], radius: 0.2 },
     });
     clay.content.add(this.clay.deskRoot);
-    const board = this.addWindow({ id: 'board', title: 'Storyboard', accent: ACCENTS.shotboard, handle: { position: [0, -0.205, 0.02], length: 0.3 } });
+    clay.onExpand = (on) => this.clay.setControlsVisible(on);
+
+    const board = this.addWindow({
+      id: 'board',
+      title: 'Storyboard',
+      accent: ACCENTS.shotboard,
+      handle: { position: [0, -0.205, 0.02], length: 0.3 },
+      reach: { center: [0, 0, 0], radius: 0.35 },
+    });
     this.board = new StoryboardWall(ctx, board.content, ACCENTS.shotboard);
 
-    // The dock: on the left of the desk, angled toward you.
-    this.dock = new CanvasPanel({ width: 0.22, height: 0.17, columns: 2, buttonHeight: 0.028, accent: this.accent });
-    this.dock.mesh.name = 'StudioDock';
-    this.dock.mesh.position.set(-0.5, 0.1, 0.1);
-    this.dock.mesh.rotation.set(-0.35, 0.75, 0, 'YXZ');
-    this.dock.onPress = (id) => this.onDock(id);
-    this.deskRoot.add(this.dock.mesh);
-
+    this.buildDock();
     this.loadLayout();
   }
 
-  private addWindow(opts: ConstructorParameters<typeof DeskWindow>[0] & { id: WindowId }): DeskWindow {
+  private addWindow(opts: WindowOptions & { id: WindowId }): DeskWindow {
     const w = new DeskWindow(opts);
     w.onMoved = () => this.saveLayout();
-    w.onClose = () => this.setOpen(opts.id, false);
+    w.onHide = () => this.setOpen(opts.id, false);
+    w.onFocus = () => this.toggleFocus(opts.id);
+    w.onPin = () => this.saveLayout();
     this.deskRoot.add(w.root);
     this.windows.set(opts.id, w);
     return w;
+  }
+
+  /** A column of round buttons on a small tray to the left of the desk. */
+  private buildDock(): void {
+    const dock = new Group();
+    dock.name = 'StudioDock';
+    dock.position.set(-0.48, 0, 0.02);
+    dock.rotation.y = 0.45;
+    const items: [string, string, string, string][] = [
+      ['draw', 'draw', 'Draw', ACCENTS.sketch],
+      ['conjure', 'conjure', 'Conjure', ACCENTS.conjure],
+      ['clay', 'clay', 'Clay', ACCENTS.clay],
+      ['board', 'board', 'Storyboard', ACCENTS.shotboard],
+      ['snap', 'snap', 'Snap view', this.accent],
+      ['play', 'play', 'Play the storyboard', this.accent],
+      ['tidy', 'reset', 'Tidy windows', this.accent],
+    ];
+    const gap = 0.045;
+    items.forEach(([id, icon, label, accent], i) => {
+      const b = new IconButton({ id: `dock:${id}`, icon, label, accent, radius: 0.016 });
+      b.group.position.set(0, 0.002, (i - (items.length - 1) / 2) * gap);
+      b.onPress = () => this.onDock(id);
+      this.dock.set(id, b);
+      dock.add(b.group);
+    });
+    // Tray.
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 640;
+    const c = canvas.getContext('2d')!;
+    roundRect(c, 4, 4, 120, 632, 48);
+    c.fillStyle = 'rgba(28,31,38,0.6)';
+    c.fill();
+    c.lineWidth = 4;
+    c.strokeStyle = withAlpha(this.accent, 0.7);
+    c.stroke();
+    const texture = new CanvasTexture(canvas);
+    texture.colorSpace = SRGBColorSpace;
+    const tray = new Mesh(new PlaneGeometry(0.06, items.length * gap + 0.02), new MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false }));
+    tray.rotation.x = -Math.PI / 2;
+    tray.position.y = 0.001;
+    tray.userData.hideInShots = true;
+    dock.add(tray);
+    this.deskRoot.add(dock);
   }
 
   private win(id: WindowId): DeskWindow {
@@ -151,6 +235,7 @@ export class StudioPrototype implements Prototype {
   holding(): boolean {
     return (
       [...this.windows.values()].some((w) => w.moving) ||
+      this.selection.busy ||
       this.sketch.holding() ||
       (this.win('conjure').open && this.conjure.holding()) ||
       (this.win('clay').open && this.clay.holding())
@@ -159,8 +244,8 @@ export class StudioPrototype implements Prototype {
 
   update(dt: number): void {
     const pointers = this.ctx.pointers;
-    for (const w of this.windows.values()) w.update(pointers);
-    this.dock.update(pointers, dt);
+    for (const w of this.windows.values()) w.update(pointers, dt);
+    this.selection.update(dt);
     if (this.win('board').open) this.board.update(dt);
     if (this.win('clay').open) {
       this.clay.update(dt);
@@ -188,7 +273,7 @@ export class StudioPrototype implements Prototype {
     const was = w.open;
     w.open = open;
     if (id === 'draw') {
-      this.sketch.toolsRoot.visible = open;
+      this.sketch.toolsRoot.visible = open && w.expanded;
       this.sketch.drawEnabled = open;
     }
     if (open !== was) {
@@ -202,58 +287,112 @@ export class StudioPrototype implements Prototype {
   }
 
   private onDock(id: string): void {
-    if (id.startsWith('win:')) {
-      const w = id.slice(4) as WindowId;
-      this.setOpen(w, !this.win(w).open);
+    if (WINDOW_IDS.includes(id as WindowId)) {
+      // Opening something else ends focus mode.
+      if (this.focusState && this.focusState.id !== id) this.unfocus();
+      this.setOpen(id as WindowId, !this.win(id as WindowId).open);
     }
     if (id === 'snap') this.snapView();
     if (id === 'play') {
       if (!this.win('board').open) this.setOpen('board', true);
       this.board.play();
     }
-    if (id === 'reset') this.resetLayout();
+    if (id === 'tidy') this.resetLayout();
   }
 
-  private refreshDock(): void {
-    const tone = (id: WindowId): PanelButton['tone'] => (this.win(id).open ? 'active' : 'default');
-    const shots = this.ctx.album.shots.length;
-    this.dock.setText('Studio', '', this.status || 'Open tools here. Move a window by its bar.');
-    this.dock.setButtons([
-      { id: 'win:draw', label: 'Draw', tone: tone('draw'), accent: ACCENTS.sketch },
-      { id: 'win:conjure', label: 'Conjure', tone: tone('conjure'), accent: ACCENTS.conjure },
-      { id: 'win:clay', label: 'Clay', tone: tone('clay'), accent: ACCENTS.clay },
-      { id: 'win:board', label: 'Board', tone: tone('board'), accent: ACCENTS.shotboard },
-      { id: 'snap', label: 'Snap view', tone: 'primary' },
-      { id: 'play', label: this.board.playing >= 0 ? 'Playing' : 'Play', disabled: shots === 0 },
-    ]);
+  /** Focus: this tool gets the desk; press again to go back. */
+  private toggleFocus(id: WindowId): void {
+    if (this.focusState?.id === id) {
+      this.unfocus();
+      return;
+    }
+    if (this.focusState) this.unfocus();
+    const saved = this.snapshot();
+    this.focusState = { id, saved };
+    for (const other of WINDOW_IDS) if (other !== id && this.win(other).open) this.setOpen(other, false);
+    const w = this.win(id);
+    if (!w.open) this.setOpen(id, true);
+    const pose = FOCUS_POSE[id];
+    if (pose) {
+      w.root.position.set(...pose);
+      w.root.rotation.set(0, 0, 0);
+    }
+    w.pinned = true;
+    w.focused = true;
+    if (id === 'clay') {
+      this.clay.setLayout('full');
+      w.trayVisible = false;
+    }
+    if (id === 'conjure') {
+      this.conjure.setLayout('full');
+      w.trayVisible = false;
+    }
+    Sfx.whoosh();
   }
 
-  private saveLayout(): void {
-    const out: Partial<Record<WindowId, SavedWindow>> = {};
+  private unfocus(): void {
+    const state = this.focusState;
+    if (!state) return;
+    this.focusState = null;
+    const w = this.win(state.id);
+    w.focused = false;
+    w.trayVisible = true;
+    if (state.id === 'clay') this.clay.setLayout('compact');
+    if (state.id === 'conjure') this.conjure.setLayout('compact');
+    this.apply(state.saved);
+    Sfx.whoosh();
+  }
+
+  private snapshot(): Record<WindowId, SavedWindow> {
+    const out = {} as Record<WindowId, SavedWindow>;
     for (const [id, w] of this.windows) {
       const p = w.root.position;
-      out[id] = { open: w.open, p: [p.x, p.y, p.z].map((v) => +v.toFixed(4)) as [number, number, number], yaw: +w.root.rotation.y.toFixed(4) };
+      out[id] = { open: w.open, p: [p.x, p.y, p.z].map((v) => +v.toFixed(4)) as [number, number, number], yaw: +w.root.rotation.y.toFixed(4), pinned: w.pinned };
     }
-    store.set(LAYOUT_KEY, out);
+    return out;
   }
 
-  private loadLayout(): void {
-    const saved = store.get<Partial<Record<WindowId, SavedWindow>>>(LAYOUT_KEY, {});
-    for (const [id, w] of this.windows) {
-      const s = saved[id] ?? DEFAULTS[id];
+  private apply(layout: Partial<Record<WindowId, SavedWindow>>): void {
+    for (const id of WINDOW_IDS) {
+      const s = layout[id] ?? DEFAULTS[id];
+      const w = this.win(id);
       w.root.position.set(...s.p);
       w.root.rotation.set(0, s.yaw, 0);
-      w.open = s.open;
+      w.pinned = s.pinned ?? false;
+      if (w.open !== s.open) this.setOpen(id, s.open);
       if (id === 'draw') {
-        this.sketch.toolsRoot.visible = s.open;
+        this.sketch.toolsRoot.visible = s.open && w.expanded;
         this.sketch.drawEnabled = s.open;
       }
     }
   }
 
+  private refreshDock(): void {
+    for (const id of WINDOW_IDS) this.dock.get(id)!.active = this.win(id).open;
+    this.dock.get('play')!.disabled = this.ctx.album.shots.length === 0;
+    this.dock.get('play')!.active = this.board.playing >= 0;
+  }
+
+  private saveLayout(): void {
+    // Focus mode is temporary: save the layout it will return to.
+    store.set(LAYOUT_KEY, this.focusState ? this.focusState.saved : this.snapshot());
+  }
+
+  private loadLayout(): void {
+    this.apply(store.get<Partial<Record<WindowId, SavedWindow>>>(LAYOUT_KEY, {}));
+  }
+
   private resetLayout(): void {
-    store.set(LAYOUT_KEY, {});
-    this.loadLayout();
+    if (this.focusState) {
+      this.focusState = null;
+      for (const w of this.windows.values()) {
+        w.focused = false;
+        w.trayVisible = true;
+      }
+      this.clay.setLayout('compact');
+      this.conjure.setLayout('compact');
+    }
+    this.apply({});
     this.saveLayout();
   }
 
@@ -271,8 +410,13 @@ export class StudioPrototype implements Prototype {
   debugState(): unknown {
     return {
       windows: Object.fromEntries(
-        [...this.windows].map(([id, w]) => [id, { open: w.open, moving: w.moving, pos: w.root.position.toArray().map((v) => +v.toFixed(3)), yaw: +w.root.rotation.y.toFixed(2) }]),
+        [...this.windows].map(([id, w]) => [
+          id,
+          { open: w.open, moving: w.moving, pinned: w.pinned, expanded: w.expanded, pos: w.root.position.toArray().map((v) => +v.toFixed(3)), yaw: +w.root.rotation.y.toFixed(2) },
+        ]),
       ),
+      focus: this.focusState?.id ?? null,
+      selection: this.selection.debug(),
       sketch: this.sketch.debugState(),
       conjure: this.conjure.debugState(),
       clay: this.clay.debugState(),
@@ -283,14 +427,16 @@ export class StudioPrototype implements Prototype {
   }
 
   debugActions = {
-    /** Press a dock button: win:draw, win:conjure, win:clay, win:board, snap, play, reset. */
-    dock: (id: string) => this.dock.press(id),
+    /** Press a dock button: draw, conjure, clay, board, snap, play, tidy (a "win:" prefix is accepted). */
+    dock: (id: string) => this.dock.get(id.replace(/^win:/, ''))?.press(true),
     press: (id: string) => {
-      if (id.startsWith('win:') || id === 'snap' || id === 'play' || id === 'reset') this.dock.press(id);
-      else if (['color', 'size', 'erase', 'undo', 'clear'].includes(id)) this.sketch.debugActions.press(id);
-      else if (['print', 'clearPrints', 'sculpt', 'smooth', 'inflate', 'mirror', 'export'].includes(id)) this.clay.debugActions.press(id);
+      const name = id.replace(/^win:/, '');
+      if (this.dock.has(name)) this.onDock(name);
+      else if (['color', 'size', 'erase', 'select', 'undo', 'clear'].includes(id)) this.sketch.debugActions.press(id);
+      else if (['print', 'clearPrints', 'sculpt', 'smooth', 'inflate', 'mirror', 'spin', 'export'].includes(id)) this.clay.debugActions.press(id);
       else this.conjure.debugActions.press(id);
     },
+    focus: (id: WindowId) => this.toggleFocus(id),
     say: (text: string) => this.conjure.debugActions.say(text),
     itemWorld: (index: number) => this.conjure.debugActions.itemWorld(index),
     strokePoint: (stroke: number, point: number) => this.sketch.debugActions.strokePoint(stroke, point),
@@ -299,7 +445,8 @@ export class StudioPrototype implements Prototype {
     clear: () => this.sketch.debugActions.clear(),
     windowWorld: (id: WindowId) => {
       const d = this.win(id).debug();
-      return { handle: { x: d.handle.x, y: d.handle.y, z: d.handle.z }, close: { x: d.close.x, y: d.close.y, z: d.close.z } };
+      const v = (p: Vector3) => ({ x: p.x, y: p.y, z: p.z });
+      return { handle: v(d.handle), pin: v(d.pin), focus: v(d.focus), hide: v(d.hide) };
     },
     resetLayout: () => this.resetLayout(),
   };

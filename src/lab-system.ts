@@ -33,6 +33,8 @@ import { VirtualKeyboard } from './core/keyboard.js';
 import { type LabContext, type Prototype, store } from './core/context.js';
 import { HeldPose } from './core/grab.js';
 import { TRASH_POS, TrashBin } from './core/trash.js';
+import { IconButton } from './core/icon-button.js';
+import { HandRays } from './core/rays.js';
 import { grabDistance, HandState, Hands, pointerDistance } from './core/hands.js';
 import { CanvasPanel } from './core/panel.js';
 import { Sfx } from './core/sfx.js';
@@ -79,6 +81,8 @@ export class LabSystem extends createSystem({
   private album = new Album();
   private frame!: FrameCamera;
   private cursors: HandCursor[] = [];
+  private rays!: HandRays;
+  private readonly eye = new Vector3();
   private skeletons: HandSkeleton[] = [];
   private coach!: CanvasPanel;
   private coachTime = 0;
@@ -165,6 +169,10 @@ export class LabSystem extends createSystem({
       openKeyboard: (request) => this.keyboard.open(request),
     };
     this.frame = new FrameCamera(this.renderer, this.scene, this.album);
+    const rayRoot = new Group();
+    rayRoot.name = 'HandRays';
+    this.world.createTransformEntity(rayRoot);
+    this.rays = new HandRays(rayRoot);
     this.world.createTransformEntity(this.frame.line);
 
     this.buildChrome();
@@ -510,6 +518,7 @@ export class LabSystem extends createSystem({
     this.camera.getWorldDirection(this.forward);
     Sfx.setListener(this.head.x, this.head.y, this.head.z, this.forward.x, this.forward.y, this.forward.z);
     const handsVisible = this.ctx.immersive;
+    if (this.ctx.immersive) for (const h of this.hands.both) this.rays.aim(h, this.head, this.forward);
     this.cursors[0].update(this.hands.left, this.head, handsVisible);
     this.cursors[1].update(this.hands.right, this.head, handsVisible);
     if (this.skeletons.length) {
@@ -526,6 +535,7 @@ export class LabSystem extends createSystem({
     }
     if (this.keyboard.isOpen) {
       // The keyboard has the user's attention: pause the app underneath.
+      this.rays.hide();
       this.updateWristMenu(dt);
       this.keyboard.update(this.ctx.pointers, dt);
       return;
@@ -534,6 +544,9 @@ export class LabSystem extends createSystem({
     this.updateWristMenu(dt);
     this.updateCoach(dt);
     // The director's frame works in every prototype, unless it owns the pinches.
+    // Desk buttons first, then far rays: both consume the pinches they use.
+    IconButton.updateAll(this.ctx.pointers, this.camera.getWorldPosition(this.eye), dt);
+    this.rays.update(this.hands.both, this.ctx.immersive && !this.wristOpen && this.deskGrab == null, (h) => h.pinching || h.grabbing);
     const frameEnabled = this.ctx.immersive && !this.wristOpen && this.deskGrab == null && !(this.active?.holding?.() ?? false);
     const caption = this.frame.update(this.hands.left, this.hands.right, this.head, frameEnabled, dt);
     this.ctx.frameArmed = this.frame.isArmed;
@@ -953,6 +966,26 @@ export class LabSystem extends createSystem({
         const rect = this.renderer.domElement.getBoundingClientRect();
         return { x: rect.left + ((v.x + 1) / 2) * rect.width, y: rect.top + ((1 - v.y) / 2) * rect.height };
       },
+      /** Far rays per hand: shown, distance, dragging. */
+      rays: () => this.rays.debug(),
+      /** A visible icon button's face centre and normal (world), or null. */
+      icon: (id: string) => {
+        const b = IconButton.find(id);
+        if (!b) return null;
+        const c = b.worldCenter();
+        const n = b.worldNormal();
+        return { x: c.x, y: c.y, z: c.z, nx: n.x, ny: n.y, nz: n.z, active: b.active, disabled: b.disabled, label: b.label, hovered: b.hovered };
+      },
+      pressIcon: (id: string) => IconButton.find(id)?.press(true),
+      head: () => ({ x: this.head.x, y: this.head.y, z: this.head.z }),
+      icons: () => IconButton.all.filter((b) => {
+        let n: { visible: boolean; parent: unknown } | null = b.group;
+        while (n) {
+          if (!n.visible) return false;
+          n = n.parent as typeof n;
+        }
+        return true;
+      }).map((b) => b.id),
       /** Trash bin: world position of its mouth, items thrown away, shown. */
       trash: () => {
         this.desk.updateMatrixWorld(true);
@@ -960,7 +993,7 @@ export class LabSystem extends createSystem({
         return { x: p.x, y: p.y, z: p.z, count: this.trashBin.count, visible: this.trashBin.group.visible };
       },
       hands: () =>
-        this.hands.both.map((h) => ({ side: h.side, tracked: h.tracked, pinching: h.pinching, grabbing: h.grabbing, gap: h.indexTip.distanceTo(h.thumbTip), midGap: h.tips[2].distanceTo(h.thumbTip) })),
+        this.hands.both.map((h) => ({ side: h.side, tracked: h.tracked, pinching: h.pinching, grabbing: h.grabbing, gap: h.indexTip.distanceTo(h.thumbTip), midGap: h.tips[2].distanceTo(h.thumbTip), pinch: h.pinchPoint.toArray(), index: h.indexTip.toArray(), palm: h.palm.toArray(), wrist: h.wrist.toArray() })),
     };
     (window as unknown as { lab: typeof api }).lab = api;
   }

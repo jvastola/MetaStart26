@@ -2,7 +2,7 @@
  * Sketch: pinch to draw in the air above your desk.
  *
  * Pinch and move to draw a tube stroke; let go to finish it. Both hands can
- * draw at once. Pick a colour and brush size on the panel, or swipe your
+ * draw at once. Pick a colour and brush size with the round buttons, or swipe your
  * thumb to change colour and tap it to undo. Strokes live in desk space and
  * autosave, so a sketch is still there next session.
  *
@@ -29,7 +29,9 @@ import { type LabContext, type Prototype, store } from '../../core/context.js';
 import { HeldPose } from '../../core/grab.js';
 import type { HandState } from '../../core/hands.js';
 import { ColorWheel } from '../../core/color-wheel.js';
-import { CanvasPanel, type PanelButton } from '../../core/panel.js';
+import { IconButton } from '../../core/icon-button.js';
+import { type Selectable, Selection, type SelectionSource } from '../../core/selection.js';
+import { CanvasPanel } from '../../core/panel.js';
 import { Sfx } from '../../core/sfx.js';
 
 const SIZES = [
@@ -86,7 +88,7 @@ class Stroke {
   private readonly dir = new Vector3();
 
   constructor(
-    readonly color: string,
+    public color: string,
     readonly radius: number,
   ) {
     this.joints = new InstancedMesh(sphere, material(color), MAX_POINTS);
@@ -139,6 +141,24 @@ class Stroke {
     return Math.sqrt(best) * this.group.scale.x;
   }
 
+  /** Repaint the whole stroke. */
+  setColor(hex: string, lit: boolean): void {
+    this.color = hex;
+    this.setLit(lit);
+  }
+
+  /** World centre (the group origin, once recentred) and reach in metres. */
+  bounds(center: Vector3): number {
+    this.group.updateMatrixWorld(true);
+    let c = new Vector3();
+    for (const p of this.points) c.add(p);
+    c = c.multiplyScalar(1 / Math.max(1, this.points.length));
+    let r = 0;
+    for (const p of this.points) r = Math.max(r, p.distanceTo(c));
+    this.group.localToWorld(center.copy(c));
+    return (r + this.radius) * this.group.scale.x;
+  }
+
   /** Brush radius in metres, after scaling. */
   get worldRadius(): number {
     return this.radius * this.group.scale.x;
@@ -183,15 +203,14 @@ type Triple = [number, number, number];
 /** Lets another app (Studio) embed Sketch with its own layout and buttons. */
 export interface SketchOptions {
   saveKey?: string;
-  panel?: { position: Triple; rotation: Triple };
+  /** Where the round tool buttons sit (desk-local; Studio moves them as a window). */
+  tools?: { position: Triple; rotation: Triple };
   wheel?: { position: Triple; rotation: Triple; visible?: boolean };
+  /** A selection shared with other tools (Studio). Sketch makes its own otherwise. */
+  selection?: () => Selection;
   /** Thumb microgestures (swipe colour, tap undo). Off when the host owns them. */
   gestures?: boolean;
-  /** Extra buttons appended to the toolbar, and their handler. */
-  extraButtons?: () => PanelButton[];
-  onExtra?: (id: string) => void;
-  /** Toolbar heading. */
-  heading?: string;
+
 }
 
 export class SketchPrototype implements Prototype {
@@ -209,7 +228,41 @@ export class SketchPrototype implements Prototype {
   readonly wallRoot = new Group();
 
   private ctx!: LabContext;
-  private panel!: CanvasPanel;
+  private readonly buttons = new Map<string, IconButton>();
+  private selection!: Selection;
+  private ownSelection = false;
+  private readonly selectables = new Map<Stroke, Selectable>();
+  /** Lets a Selection find, move, copy, paint and delete strokes. */
+  readonly selectionSource: SelectionSource = {
+    items: () => this.strokes.filter((st) => !this.isBusy(st)).map((st) => this.selectableFor(st)),
+    remove: (items) => this.removeStrokes(items.map((i) => this.strokeOf(i)).filter((st): st is Stroke => st != null)),
+    duplicate: (items) => {
+      const copies: Selectable[] = [];
+      for (const item of items) {
+        const st = this.strokeOf(item);
+        if (!st) continue;
+        const copy = new Stroke(st.color, st.radius);
+        for (const pt of st.points) copy.add(pt);
+        copy.group.position.copy(st.group.position).add(new Vector3(0.04, 0.02, 0));
+        copy.group.quaternion.copy(st.group.quaternion);
+        copy.group.scale.copy(st.group.scale);
+        this.deskRoot.add(copy.group);
+        this.strokes.push(copy);
+        this.record({ kind: 'add', stroke: copy });
+        copies.push(this.selectableFor(copy));
+      }
+      this.saveTimer = 0.8;
+      return copies;
+    },
+    recolor: (items, hex) => {
+      for (const item of items) this.strokeOf(item)?.setColor(hex, true);
+      this.saveTimer = 0.8;
+    },
+    moved: () => {
+      this.moves += 1;
+      this.saveTimer = 0.8;
+    },
+  };
   private strokes: Stroke[] = [];
   private live = new Map<HandState, { stroke: Stroke; smooth: Vector3 }>();
   private held = new Map<HandState, { stroke: Stroke; pose: HeldPose }>();
@@ -226,6 +279,8 @@ export class SketchPrototype implements Prototype {
   } | null = null;
   private history: HistoryEntry[] = [];
   private erasing = false;
+  /** Select tool on: a pinch draws a selection loop instead of a stroke. */
+  selecting = false;
   private erased = 0;
   private moves = 0;
   /** Off when a host (Studio) closes the drawing tools: strokes stay, pinches do not draw. */
@@ -247,19 +302,40 @@ export class SketchPrototype implements Prototype {
 
   init(ctx: LabContext): void {
     this.ctx = ctx;
-    const extra = this.options.extraButtons != null;
-    this.panel = new CanvasPanel({ width: 0.36, height: extra ? 0.18 : 0.15, columns: 4, buttonHeight: 0.03, accent: this.accent });
-    this.panel.mesh.name = 'SketchPanel';
-    const pose = this.options.panel ?? { position: [0.33, 0.09, -0.04], rotation: [-0.25, -0.5, 0] };
-    this.panel.mesh.position.set(...pose.position);
-    this.panel.mesh.rotation.set(...pose.rotation, 'YXZ');
-    this.panel.onPress = (id) => this.onButton(id);
+    if (this.options.selection) this.selection = this.options.selection();
+    else {
+      this.selection = new Selection(ctx, this.accent);
+      this.ownSelection = true;
+      this.selection.armed = () => this.selecting;
+      this.selection.paintColor = () => this.colorHex;
+      this.deskRoot.add(this.selection.group);
+    }
+    this.selection.addSource(this.selectionSource);
+    // Round tool buttons in a 3 x 2 grid.
+    const tools: [string, string, string][] = [
+      ['color', 'colour', 'Colour'],
+      ['size', 'size', 'Brush size'],
+      ['erase', 'erase', 'Erase'],
+      ['select', 'select', 'Select (loop around things)'],
+      ['undo', 'undo', 'Undo'],
+      ['clear', 'trash', 'Clear all'],
+    ];
+    tools.forEach(([id, icon, label], i) => {
+      const b = new IconButton({ id: `sketch:${id}`, icon, label, accent: this.accent, radius: 0.016 });
+      b.group.position.set(((i % 3) - 1) * 0.045, 0.001, (Math.floor(i / 3) - 0.5) * 0.045);
+      b.onPress = () => this.onButton(id);
+      this.buttons.set(id, b);
+      this.toolsRoot.add(b.group);
+    });
+    const pose = this.options.tools ?? { position: [-0.26, 0, 0.15], rotation: [0, 0.25, 0] };
+    this.toolsRoot.position.set(...pose.position);
+    this.toolsRoot.rotation.set(...pose.rotation, 'YXZ');
     this.deskRoot.add(this.toolsRoot);
-    this.toolsRoot.add(this.panel.mesh);
 
     // Colour wheel on the left of the desk, angled toward you.
     this.wheel = new ColorWheel(0.15, this.colorHex);
-    const wheel = this.options.wheel ?? { position: [-0.33, 0.13, -0.02], rotation: [-0.2, 0.5, 0], visible: true };
+    // Wheel position is relative to the tool buttons.
+    const wheel = this.options.wheel ?? { position: [-0.08, 0.13, -0.15], rotation: [-0.2, 0.25, 0], visible: true };
     this.wheel.mesh.position.set(...wheel.position);
     this.wheel.mesh.rotation.set(...wheel.rotation, 'YXZ');
     this.wheel.mesh.visible = wheel.visible ?? true;
@@ -282,13 +358,13 @@ export class SketchPrototype implements Prototype {
   }
 
   update(dt: number): void {
-    if (this.toolsRoot.visible) this.panel.update(this.ctx.pointers, dt);
     for (const hand of this.options.gestures === false ? [] : this.ctx.hands.both) {
       if (hand.gesture === 'right') this.wheel.cycleRecent(1);
       if (hand.gesture === 'left') this.wheel.cycleRecent(-1);
       if (hand.gesture === 'tap') this.undo();
     }
     if (this.wheel.mesh.visible && this.toolsRoot.visible) this.wheel.update(this.ctx.pointers);
+    if (this.ownSelection) this.selection.update(dt);
     for (const hand of this.ctx.pointers) this.updateHold(hand);
     this.updateTwoHand();
     // Both hands pinched together to frame a shot: drop the strokes they began.
@@ -300,7 +376,7 @@ export class SketchPrototype implements Prototype {
     }
     for (const hand of this.ctx.pointers) {
       if (this.erasing) this.updateEraser(hand);
-      else this.updateHand(hand);
+      else if (!this.selecting && !this.selection.owns(hand)) this.updateHand(hand);
     }
     if (this.saveTimer > 0) {
       this.saveTimer -= dt;
@@ -413,6 +489,20 @@ export class SketchPrototype implements Prototype {
     Sfx.erase(hand.isMouse ? undefined : hand.pinchPoint);
   }
 
+  private selectableFor(stroke: Stroke): Selectable {
+    let s = this.selectables.get(stroke);
+    if (!s) {
+      s = { object: stroke.group, source: this.selectionSource, bounds: (c) => stroke.bounds(c), setLit: (on) => stroke.setLit(on) };
+      this.selectables.set(stroke, s);
+    }
+    return s;
+  }
+
+  private strokeOf(item: Selectable): Stroke | undefined {
+    for (const [st, sel] of this.selectables) if (sel === item) return st;
+    return undefined;
+  }
+
   private isBusy(stroke: Stroke): boolean {
     return [...this.live.values()].some((l) => l.stroke === stroke) || [...this.held.values()].some((h) => h.stroke === stroke);
   }
@@ -435,7 +525,7 @@ export class SketchPrototype implements Prototype {
     const live = this.live.get(hand);
     if (!live) {
       if (this.held.has(hand) || !this.drawEnabled) return;
-      if (!hand.tracked || !hand.pinchStarted || this.panel.contains(hand.pinchPoint, 0.06)) return;
+      if (!hand.tracked || !hand.pinchStarted) return;
       // Pinches on any other showing panel (Conjure in Studio, say) press it instead.
       if (CanvasPanel.anyContains(hand.pinchPoint, 0.05)) return;
       if (this.wheel.active || this.onWheel(hand)) return;
@@ -542,8 +632,19 @@ export class SketchPrototype implements Prototype {
     if (id === 'color') this.wheel.mesh.visible = !this.wheel.mesh.visible;
     if (id === 'undo') this.undo();
     if (id === 'clear') this.clear();
-    if (id === 'erase') this.erasing = !this.erasing;
-    this.options.onExtra?.(id);
+    if (id === 'erase') {
+      this.erasing = !this.erasing;
+      if (this.erasing) this.selecting = false;
+    }
+    if (id === 'select') {
+      this.selecting = !this.selecting;
+      if (this.selecting) this.erasing = false;
+    }
+  }
+
+  /** The current brush colour (for painting a selection). */
+  get brushColor(): string {
+    return this.colorHex;
   }
 
   /** Something is in hand (a stroke being moved). Drawing does not count, so snapshots still work. */
@@ -556,26 +657,19 @@ export class SketchPrototype implements Prototype {
     return this.held.has(hand) || this.live.has(hand);
   }
 
+  /** Buttons light up when their mode is on and dim when there is nothing to act on. */
   private refresh(): void {
-    const points = this.strokes.reduce((a, s) => a + s.points.length, 0);
-    const n = `${this.strokes.length} stroke${this.strokes.length === 1 ? '' : 's'}`;
-    this.panel.setText(
-      `${this.options.heading ?? 'Sketch'} - ${this.erasing ? 'ERASER' : `${SIZES[this.size].name} brush`}`,
-      '',
-      this.erasing
-        ? `${this.ctx.immersive ? 'Pinch' : 'Drag'} across strokes to erase them. Undo brings them back. ${n}.`
-        : this.ctx.immersive
-          ? `Pinch to draw; grab (thumb + middle) to move, both hands to scale. ${n}.`
-          : `Drag to draw; right-drag a stroke to move it. ${n}, ${points} points.`,
-    );
-    this.panel.setButtons([
-      { id: 'color', label: 'Colour', tone: this.wheel.mesh.visible ? 'active' : 'default' },
-      { id: 'size', label: SIZES[this.size].name },
-      { id: 'erase', label: 'Erase', tone: this.erasing ? 'danger' : 'default' },
-      { id: 'undo', label: 'Undo', disabled: this.history.length === 0 },
-      { id: 'clear', label: 'Clear all', disabled: this.strokes.length === 0, span: 4 },
-      ...(this.options.extraButtons?.() ?? []),
-    ]);
+    const set = (id: string, active: boolean, disabled = false): void => {
+      const b = this.buttons.get(id)!;
+      b.active = active;
+      b.disabled = disabled;
+    };
+    set('color', this.wheel.mesh.visible);
+    set('erase', this.erasing);
+    set('select', this.selecting);
+    set('undo', false, this.history.length === 0);
+    set('clear', false, this.strokes.length === 0);
+    this.buttons.get('size')!.label = `Brush: ${SIZES[this.size].name}`;
   }
 
   // ------------------------------------------------------------ persistence
@@ -618,6 +712,8 @@ export class SketchPrototype implements Prototype {
       twoHand: this.twoHand != null,
       scales: this.strokes.map((s) => +s.group.scale.x.toFixed(3)),
       erasing: this.erasing,
+      selecting: this.selecting,
+      selection: this.ownSelection ? this.selection.debug() : null,
       erased: this.erased,
       history: this.history.length,
       moves: this.moves,
@@ -630,7 +726,7 @@ export class SketchPrototype implements Prototype {
   }
 
   debugActions = {
-    press: (id: string) => this.panel.press(id),
+    press: (id: string) => this.onButton(id),
     clear: () => this.clear(),
     /** World position of a stroke's point, for aiming a test grab. */
     strokePoint: (stroke: number, point: number) => {

@@ -33,6 +33,7 @@ import { Sfx } from '../../core/sfx.js';
 import { Voice } from '../../core/voice.js';
 import { parseIntent } from './intent.js';
 import { buildFromPrompt } from './kit.js';
+import type { Selectable, SelectionSource } from '../../core/selection.js';
 import { availableProviders, pollJob, type Provider, startJob } from './remote.js';
 
 type Source = 'sketch' | Provider;
@@ -48,6 +49,8 @@ interface Item {
   /** Placed by hand somewhere other than the pedestal or shelf. */
   free: boolean;
   radius: number;
+  /** Geometry and materials shared with another item (a duplicate): do not dispose. */
+  shared?: boolean;
 }
 
 interface Hold {
@@ -114,10 +117,105 @@ export class ConjurePrototype implements Prototype {
   private ideaOffset = 0;
   private readonly tmp = new Vector3();
   private readonly tmp2 = new Vector3();
-  private readonly shelf: Vector3[];
+  private shelf: Vector3[];
+  private readonly selectables = new Map<Item, Selectable>();
+  /** Lets a Selection find, move, copy, paint and delete creations. */
+  readonly selectionSource: SelectionSource = {
+    items: () => this.items.filter((i) => !this.holds.some((h) => h.item === i)).map((i) => this.selectableFor(i)),
+    remove: (items) => {
+      for (const sel of items) {
+        const item = this.itemOf(sel);
+        if (item) this.remove(item);
+      }
+    },
+    duplicate: (items) => {
+      const copies: Selectable[] = [];
+      for (const sel of items) {
+        const item = this.itemOf(sel);
+        if (!item) continue;
+        const copy = this.duplicateItem(item);
+        copies.push(this.selectableFor(copy));
+      }
+      return copies;
+    },
+    recolor: (items, hex) => {
+      for (const sel of items) {
+        const item = this.itemOf(sel);
+        if (item) recolor(item.content, hex);
+      }
+    },
+    moved: (items) => {
+      for (const sel of items) {
+        const item = this.itemOf(sel);
+        if (item) item.free = true;
+      }
+    },
+  };
 
   constructor(private readonly options: ConjureOptions = {}) {
     this.shelf = options.layout === 'compact' ? SHELF_COMPACT : SHELF;
+  }
+
+  /** Switch between the full layout and the compact (window) layout. */
+  setLayout(mode: 'full' | 'compact'): void {
+    this.shelf = mode === 'compact' ? SHELF_COMPACT : SHELF;
+    if (this.panel) {
+      this.panel.mesh.position.set(0, mode === 'compact' ? 0.11 : 0.09, mode === 'compact' ? -0.17 : -0.19);
+    }
+    this.restack();
+  }
+
+  /** The chat/prompt panel, so a host can fold it away. */
+  get panelMesh(): Object3D {
+    return this.panel.mesh;
+  }
+
+  private selectableFor(item: Item): Selectable {
+    let sel = this.selectables.get(item);
+    if (!sel) {
+      sel = {
+        object: item.holder,
+        source: this.selectionSource,
+        bounds: (c) => {
+          item.holder.getWorldPosition(c);
+          c.y += 0.06 * item.holder.scale.y;
+          return 0.075 * item.holder.scale.x;
+        },
+        // Selected things stay where they are instead of sliding back to the shelf.
+        setLit: (on) => {
+          if (on) item.free = true;
+        },
+      };
+      this.selectables.set(item, sel);
+    }
+    return sel;
+  }
+
+  private itemOf(sel: Selectable): Item | undefined {
+    for (const [item, s] of this.selectables) if (s === sel) return item;
+    return undefined;
+  }
+
+  private duplicateItem(item: Item): Item {
+    let content: Object3D;
+    let shared = false;
+    if (item.source === 'sketch') content = buildFromPrompt(item.prompt, item.variation).object;
+    else {
+      content = item.content.clone(true);
+      shared = true;
+      // Both now share geometry, so neither may dispose it.
+      item.shared = true;
+    }
+    const holder = new Group();
+    holder.add(content, blobShadow(0.13));
+    holder.position.copy(item.holder.position).add(new Vector3(0.06, 0, 0.03));
+    holder.quaternion.copy(item.holder.quaternion);
+    holder.scale.copy(item.holder.scale);
+    holder.userData.userScaled = true;
+    const copy: Item = { ...item, holder, content, free: true, spin: false, shared };
+    this.items.push(copy);
+    this.deskRoot.add(holder);
+    return copy;
   }
 
   init(ctx: LabContext): void {
@@ -285,7 +383,8 @@ export class ConjurePrototype implements Prototype {
     this.holds = this.holds.filter((h) => h.item !== item);
     if (this.generating?.item === item) this.generating = null;
     this.deskRoot.remove(item.holder);
-    dispose(item.content);
+    if (!item.shared) dispose(item.content);
+    this.selectables.delete(item);
     this.restack();
   }
 

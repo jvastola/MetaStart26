@@ -19,6 +19,7 @@ import {
   Vector3,
 } from '@iwsdk/core';
 import type { HandState } from './hands.js';
+import { RayTargets } from './rays.js';
 import { Sfx } from './sfx.js';
 
 export type Tone = 'default' | 'primary' | 'danger' | 'active';
@@ -128,6 +129,42 @@ export class CanvasPanel {
     this.mesh = new Mesh(new PlaneGeometry(this.opts.width, this.opts.height), material);
     this.mesh.renderOrder = 10;
     CanvasPanel.all.push(this);
+    // Buttons can be pressed from afar with a hand ray.
+    let rayButton = -1;
+    RayTargets.add({
+      hit: (origin, dir) => {
+        if (!isVisible(this.mesh) || this.buttons.length === 0) return null;
+        const hit = this.rayHitDistance(origin, dir);
+        rayButton = hit?.button ?? -1;
+        return hit && hit.button >= 0 && !this.buttons[hit.button].disabled ? hit.t : null;
+      },
+      hover: () => {
+        this.rayHover = rayButton;
+        this.rayHoverTime = 0.12;
+      },
+      press: () => {
+        if (rayButton >= 0) this.tryPress(rayButton);
+      },
+    });
+  }
+
+  private rayHover = -1;
+  private rayHoverTime = 0;
+
+  /** Ray hit on the panel: distance and the button under it (or -1). */
+  private rayHitDistance(origin: Vector3, dir: Vector3): { t: number; button: number } | null {
+    this.mesh.updateMatrixWorld();
+    const o = this.toLocal(origin).clone();
+    this.local.copy(origin).add(dir);
+    const d = this.mesh.worldToLocal(this.local).sub(o);
+    if (Math.abs(d.z) < 1e-6) return null;
+    const t = -o.z / d.z;
+    if (t < 0) return null;
+    const x = o.x + d.x * t;
+    const y = o.y + d.y * t;
+    if (Math.abs(x) > this.opts.width / 2 || Math.abs(y) > this.opts.height / 2) return null;
+    if (this.dirty) this.redraw();
+    return { t, button: this.buttonAt(x, y) };
   }
 
   /** True if the point is over any panel that is showing right now. */
@@ -209,7 +246,8 @@ export class CanvasPanel {
       return;
     }
     this.mesh.updateMatrixWorld();
-    let hover = -1;
+    this.rayHoverTime = Math.max(0, this.rayHoverTime - dt);
+    let hover = this.rayHoverTime > 0 ? this.rayHover : -1;
     for (const p of pointers) {
       if (!p.tracked) continue;
       if (p.isMouse) {
