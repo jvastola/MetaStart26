@@ -166,7 +166,9 @@ export class ClayPrototype implements Prototype {
   private sizeSlider!: DeskSlider;
   private dirty = false;
   private saveTimer = 0;
-  private undo: Float32Array[] = [];
+  private undoStack: Float32Array[] = [];
+  /** Told when an undo step is added ('push') or used up here ('pop'), so a host can keep one undo order. */
+  onHistory: ((event: 'push' | 'pop') => void) | null = null;
   private touching = false;
   private pulls: { hand: HandState; grab: Grab; start: Vector3 }[] = [];
   private spin: { hand: HandState; last: number } | null = null;
@@ -234,7 +236,7 @@ export class ClayPrototype implements Prototype {
         object: p.holder,
         source: this.selectionSource,
         bounds: (c) => {
-          p.holder.updateMatrixWorld(true);
+          p.holder.updateWorldMatrix(true, false);
           p.holder.localToWorld(c.set(0, p.height / 2, 0));
           return Math.max(0.04, p.height * 0.6) * p.holder.scale.x;
         },
@@ -556,13 +558,14 @@ export class ClayPrototype implements Prototype {
   /** Clay-local copy of a world point. */
   private local(world: Vector3, out: Vector3): Vector3 {
     out.copy(world);
-    this.clay.updateMatrixWorld(true);
+    this.clay.updateWorldMatrix(true, false);
     return this.clay.worldToLocal(out);
   }
 
   private snapshot(): void {
-    this.undo.push(Float32Array.from(this.positions));
-    if (this.undo.length > 20) this.undo.shift();
+    this.undoStack.push(Float32Array.from(this.positions));
+    if (this.undoStack.length > 20) this.undoStack.shift();
+    this.onHistory?.('push');
   }
 
   private updateHands(): void {
@@ -724,12 +727,27 @@ export class ClayPrototype implements Prototype {
     Sfx.blip(700);
   }
 
-  private doUndo(): void {
-    const prev = this.undo.pop();
-    if (!prev) return;
+  undo(): boolean {
+    return this.undoLast();
+  }
+
+  canUndo(): boolean {
+    return this.undoStack.length > 0;
+  }
+
+  /** Undo the last sculpt stroke or reset. `fromHost`: a host's shared Undo asked. */
+  undoLast(fromHost = false): boolean {
+    const prev = this.undoStack.pop();
+    if (!prev) return false;
+    if (!fromHost) this.onHistory?.('pop');
     this.positions.set(prev);
     this.dirty = true;
     Sfx.blip(500);
+    return true;
+  }
+
+  private doUndo(): void {
+    this.undoLast();
   }
 
   private onButton(id: string): void {
@@ -788,7 +806,7 @@ export class ClayPrototype implements Prototype {
   /** Hand a print over to the desk: it stays there in every app and next session. */
   private togglePin(print: Print): void {
     if (print.progress < 1) return;
-    print.holder.updateMatrixWorld(true);
+    print.holder.updateWorldMatrix(true, false);
     const pos = print.holder.getWorldPosition(new Vector3());
     const quat = print.holder.getWorldQuaternion(new Quaternion());
     const scale = print.holder.getWorldScale(new Vector3()).x / this.deskScale();
@@ -817,7 +835,7 @@ export class ClayPrototype implements Prototype {
     // Side by side on the pad: newest in the middle, older ones nudge back.
     holder.position.copy(this.printPadAt).setY(0.004);
     // Older prints still on the pad nudge back to make room.
-    this.deskRoot.updateMatrixWorld(true);
+    this.deskRoot.updateWorldMatrix(true, false);
     const padWorld = this.deskRoot.localToWorld(this.printPadAt.clone());
     for (const q of this.prints) {
       if (!q.pinned && q.holder.getWorldPosition(this.tmp).distanceTo(padWorld) < 0.03) q.holder.translateZ(-0.09 * Math.max(0.6, scale));
@@ -880,7 +898,7 @@ export class ClayPrototype implements Prototype {
     for (const p of this.prints) {
       if (p.progress < 1) {
         p.progress = Math.min(1, p.progress + dt / PRINT_TIME);
-        p.holder.updateMatrixWorld(true);
+        p.holder.updateWorldMatrix(true, false);
         const base = p.holder.getWorldPosition(this.tmp);
         const up = this.tmp2.set(0, 1, 0).transformDirection(p.holder.matrixWorld);
         // Keep what is below base + h*progress: normal points down the holder's up.
@@ -959,7 +977,7 @@ export class ClayPrototype implements Prototype {
     let bestDist = Infinity;
     for (const p of this.prints) {
       if (p.progress < 1 || p.pinned) continue;
-      p.holder.updateMatrixWorld(true);
+      p.holder.updateWorldMatrix(true, false);
       // Aim at the middle of the print.
       const centre = p.holder.localToWorld(this.tmp.set(0, p.height / 2, 0));
       const d = grabDistance(hand, centre);
@@ -1004,7 +1022,7 @@ export class ClayPrototype implements Prototype {
     set('mirror', this.mirror);
     set('spin', this.autoSpin);
     set('color', this.wheel.mesh.visible);
-    set('undo', false, this.undo.length === 0);
+    set('undo', false, this.undoStack.length === 0);
     set('clearPrints', false, this.prints.length === 0);
     this.buttons.get('clearPrints')!.label = this.prints.length ? `Clear prints (${this.prints.length})` : 'Clear prints';
   }
@@ -1019,25 +1037,25 @@ export class ClayPrototype implements Prototype {
       maxR = Math.max(maxR, r);
       minR = Math.min(minR, r);
     }
-    return { strength: +this.strength.toFixed(2), spinSpeed: +this.spinSpeed.toFixed(2), pinned: this.prints.filter((p) => p.pinned).length, baseGrab: this.baseGrab != null, brush: +this.brush.toFixed(2), autoSpin: this.autoSpin, layout: this.layoutMode, scale: +this.clay.scale.x.toFixed(2), wheelVisible: this.wheel.mesh.visible, tool: this.tool, mirror: this.mirror, maxR: +maxR.toFixed(4), minR: +minR.toFixed(4), undo: this.undo.length, spin: +this.turntable.rotation.y.toFixed(3), prints: this.prints.map((p) => ({ progress: +p.progress.toFixed(2), pos: p.holder.position.toArray().map((v) => +v.toFixed(3)), height: +p.height.toFixed(3) })), printing: this.printHolds.length, printed: this.printed };
+    return { strength: +this.strength.toFixed(2), spinSpeed: +this.spinSpeed.toFixed(2), pinned: this.prints.filter((p) => p.pinned).length, baseGrab: this.baseGrab != null, brush: +this.brush.toFixed(2), autoSpin: this.autoSpin, layout: this.layoutMode, scale: +this.clay.scale.x.toFixed(2), wheelVisible: this.wheel.mesh.visible, tool: this.tool, mirror: this.mirror, maxR: +maxR.toFixed(4), minR: +minR.toFixed(4), undo: this.undoStack.length, spin: +this.turntable.rotation.y.toFixed(3), prints: this.prints.map((p) => ({ progress: +p.progress.toFixed(2), pos: p.holder.position.toArray().map((v) => +v.toFixed(3)), height: +p.height.toFixed(3) })), printing: this.printHolds.length, printed: this.printed };
   }
 
   debugActions = {
     press: (id: string) => this.buttons.get(id)?.press(true),
     clayWorld: (lx: number, ly: number, lz: number) => {
-      this.clay.updateMatrixWorld(true);
+      this.clay.updateWorldMatrix(true, false);
       const p = this.clay.localToWorld(new Vector3(lx, ly, lz));
       return { x: p.x, y: p.y, z: p.z };
     },
     rimWorld: () => {
-      this.deskRoot.updateMatrixWorld(true);
+      this.deskRoot.updateWorldMatrix(true, false);
       const p = this.deskRoot.localToWorld(new Vector3(TABLE_R, 0.016, 0));
       return { x: p.x, y: p.y, z: p.z };
     },
     reset: () => this.onButton('reset'),
     pinPrint: (i: number) => this.prints[i] && this.togglePin(this.prints[i]),
     baseWorld: () => {
-      this.deskRoot.updateMatrixWorld(true);
+      this.deskRoot.updateWorldMatrix(true, false);
       const p = this.deskRoot.localToWorld(new Vector3(TABLE_R * 0.7, 0.012, 0.03));
       return { x: p.x, y: p.y, z: p.z };
     },
@@ -1045,7 +1063,7 @@ export class ClayPrototype implements Prototype {
     printWorld: (i: number) => {
       const p = this.prints[i];
       if (!p) return null;
-      p.holder.updateMatrixWorld(true);
+      p.holder.updateWorldMatrix(true, false);
       const w = p.holder.localToWorld(new Vector3(0, p.height / 2, 0));
       return { x: w.x, y: w.y, z: w.z };
     },

@@ -24,7 +24,7 @@ export class HeldPose {
 
   /** Remember where `object` sits relative to the hand right now. */
   begin(hand: HandState, object: Object3D, options: HoldOptions = {}): void {
-    object.updateMatrixWorld(true);
+    object.updateWorldMatrix(true, false);
     const handQ = handQuat(hand, options, tmpQ);
     const inv = tmpQ2.copy(handQ).invert();
     object.getWorldPosition(this.offsetPos).sub(hand.holdPoint).applyQuaternion(inv);
@@ -38,7 +38,7 @@ export class HeldPose {
     const worldQuat = handQ.multiply(this.offsetQuat);
     const parent = object.parent;
     if (parent) {
-      parent.updateMatrixWorld(true);
+      parent.updateWorldMatrix(true, false);
       parent.worldToLocal(worldPos);
       worldQuat.premultiply(parent.getWorldQuaternion(tmpQ2).invert());
     }

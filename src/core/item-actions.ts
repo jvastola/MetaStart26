@@ -67,7 +67,7 @@ export class ItemActions {
     this.m.compose(at, this.q, this.s);
     const parent = this.group.parent;
     if (parent) {
-      parent.updateMatrixWorld(true);
+      parent.updateWorldMatrix(true, false);
       this.m.premultiply(parent.matrixWorld.clone().invert());
     }
     this.group.matrix.copy(this.m);

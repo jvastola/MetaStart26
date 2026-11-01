@@ -94,11 +94,45 @@ export class StudioPrototype implements Prototype {
     gestures: false,
     selection: () => this.selection,
   });
-  private readonly conjure = new ConjurePrototype({ layout: 'compact' });
+  private readonly conjure = new ConjurePrototype({ layout: 'compact', undo: () => this.undo() });
   private readonly clay = new ClayPrototype({ keyPrefix: 'studio-', layout: 'compact', gestures: false, printsParent: this.deskRoot });
+
+  /** Which tool made each undo step, oldest first: one Undo across every tool. */
+  private readonly undoOrder: ('sketch' | 'conjure' | 'clay')[] = [];
+
+  private trackHistory(tool: 'sketch' | 'conjure' | 'clay', target: { onHistory: ((e: 'push' | 'pop') => void) | null }): void {
+    target.onHistory = (e) => {
+      if (e === 'push') this.undoOrder.push(tool);
+      else {
+        // The tool's own Undo used its latest step: drop that one here too.
+        const i = this.undoOrder.lastIndexOf(tool);
+        if (i >= 0) this.undoOrder.splice(i, 1);
+      }
+    };
+  }
+
+  /** Undo the latest action in any tool. */
+  undo(): boolean {
+    while (this.undoOrder.length) {
+      const tool = this.undoOrder.pop()!;
+      const done = tool === 'sketch' ? this.sketch.undoLast(true) : tool === 'conjure' ? this.conjure.undoLast(true) : this.clay.undoLast(true);
+      if (done) {
+        this.status = `Undid the last ${tool === 'sketch' ? 'drawing' : tool} change.`;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  canUndo(): boolean {
+    return this.sketch.canUndo() || this.conjure.canUndo() || this.clay.canUndo();
+  }
 
   init(ctx: LabContext): void {
     this.ctx = ctx;
+    this.trackHistory('sketch', this.sketch);
+    this.trackHistory('conjure', this.conjure);
+    this.trackHistory('clay', this.clay);
     this.selection = new Selection(ctx, this.accent);
     this.selection.armed = () => this.sketch.selecting;
     this.selection.paintColor = () => this.sketch.brushColor;
@@ -182,6 +216,7 @@ export class StudioPrototype implements Prototype {
       ['snap', 'snap', 'Snap view', this.accent],
       ['play', 'play', 'Play the storyboard', this.accent],
       ['tidy', 'reset', 'Tidy windows', this.accent],
+      ['undo', 'undo', 'Undo (any tool)', this.accent],
     ];
     const gap = 0.045;
     items.forEach(([id, icon, label, accent], i) => {
@@ -250,6 +285,7 @@ export class StudioPrototype implements Prototype {
 
   update(dt: number): void {
     const pointers = this.ctx.pointers;
+    this.dock.get('undo')!.disabled = !this.canUndo();
     for (const w of this.windows.values()) w.update(pointers, dt);
     // Storyboard cards take their grabs before an air grab could start a selection box.
     if (this.win('board').open) this.board.update(dt);
@@ -305,6 +341,7 @@ export class StudioPrototype implements Prototype {
       this.board.play();
     }
     if (id === 'tidy') this.resetLayout();
+    if (id === 'undo' && !this.undo()) this.ctx.toast('Nothing to undo.');
   }
 
   /** Focus: this tool gets the desk; press again to go back. */
@@ -428,6 +465,7 @@ export class StudioPrototype implements Prototype {
       conjure: this.conjure.debugState(),
       clay: this.clay.debugState(),
       shots: this.ctx.album.shots.length,
+      undoOrder: [...this.undoOrder],
       playing: this.board.playing,
       status: this.status,
     };
@@ -436,6 +474,7 @@ export class StudioPrototype implements Prototype {
   debugActions = {
     /** Press a dock button: draw, conjure, clay, board, snap, play, tidy (a "win:" prefix is accepted). */
     dock: (id: string) => this.dock.get(id.replace(/^win:/, ''))?.press(true),
+    undo: () => this.undo(),
     press: (id: string) => {
       const name = id.replace(/^win:/, '');
       if (this.dock.has(name)) this.onDock(name);

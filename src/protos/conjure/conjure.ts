@@ -43,9 +43,17 @@ import type { Selectable, SelectionSource } from '../../core/selection.js';
 import { IconButton } from '../../core/icon-button.js';
 import { ItemActions } from '../../core/item-actions.js';
 import { pointerDistance } from '../../core/hands.js';
-import { availableProviders, pollJob, type Provider, startJob } from './remote.js';
+import { ProgressRing } from '../../core/progress-ring.js';
+import { availableProviders, pollJob, type Provider, startJob, withTimeout } from './remote.js';
 
 type Source = 'sketch' | Provider;
+
+/** Undo steps. Removed items are kept (not disposed) until they drop out of the history. */
+type HistoryEntry =
+  | { kind: 'add'; items: Item[]; evicted: Item | null; slots: Map<Item, { slot: number | null; free: boolean }> }
+  | { kind: 'remove'; items: Item[]; slots: Map<Item, { slot: number | null; free: boolean }> };
+
+const MAX_HISTORY = 30;
 
 interface Item {
   holder: Group;
@@ -74,6 +82,8 @@ interface Hold {
   from: Vector3;
 }
 
+/** Give up on an AI model after this long and keep the offline sketch. */
+const GENERATION_LIMIT_MS = 4 * 60_000;
 const PEDESTAL = new Vector3(0, 0.014, 0);
 const SHELF = [new Vector3(-0.19, 0, 0.03), new Vector3(0.19, 0, 0.03), new Vector3(-0.27, 0, -0.09), new Vector3(0.27, 0, -0.09)];
 const MODEL_SIZE = 0.14;
@@ -105,6 +115,8 @@ const BUTTONS: [id: string, icon: string, label: string][] = [
 
 /** Lets Studio embed Conjure as a compact window. */
 export interface ConjureOptions {
+  /** A host's shared Undo, used for a spoken "undo". */
+  undo?: () => boolean;
   /** 'compact' pulls the shelf in and the panel behind the pedestal. */
   layout?: 'full' | 'compact';
 }
@@ -136,7 +148,13 @@ export class ConjurePrototype implements Prototype {
   private status = '';
   private chat: { who: 'You' | 'Conjure'; text: string }[] = [];
   private provider: Source = 'sketch';
-  private generating: { item: Item; progress: number; token: number } | null = null;
+  private generating: { item: Item; progress: number; token: number; started: number } | null = null;
+  private readonly progressRing = new ProgressRing(0.1, '#b48cff');
+  private history: HistoryEntry[] = [];
+  /** Set by placeOnPedestal when a full shelf pushed its oldest item out. */
+  private evicted: Item | null = null;
+  /** Told when an undo step is added ('push') or used up here ('pop'), so a host can keep one undo order. */
+  onHistory: ((event: 'push' | 'pop') => void) | null = null;
   private token = 0;
   private ideaOffset = 0;
   private readonly tmp = new Vector3();
@@ -148,12 +166,7 @@ export class ConjurePrototype implements Prototype {
     items: () => this.items.filter((i) => !this.holds.some((h) => h.item === i)).map((i) => this.selectableFor(i)),
     // Any creation, held ones included: a second hand on a held one scales it.
     grabbable: (w) => this.items.some((i) => i.holder.getWorldPosition(this.tmp2).distanceTo(w) < 0.08 * Math.max(0.7, i.holder.scale.x) + 0.04),
-    remove: (items) => {
-      for (const sel of items) {
-        const item = this.itemOf(sel);
-        if (item) this.remove(item);
-      }
-    },
+    remove: (items) => this.deleteItems(items.map((sel) => this.itemOf(sel)).filter((i): i is Item => i != null)),
     duplicate: (items) => {
       const copies: Selectable[] = [];
       for (const sel of items) {
@@ -162,6 +175,8 @@ export class ConjurePrototype implements Prototype {
         const copy = this.duplicateItem(item);
         copies.push(this.selectableFor(copy));
       }
+      const made = copies.map((sel) => this.itemOf(sel)).filter((i): i is Item => i != null);
+      if (made.length) this.record({ kind: 'add', items: made, evicted: null, slots: this.slotSnapshot() });
       return copies;
     },
     recolor: (items, hex) => {
@@ -230,7 +245,8 @@ export class ConjurePrototype implements Prototype {
         const oldest = [...this.items].reverse().find((i) => i !== item && i.slot != null && i.slot >= 0)!;
         spot = oldest.slot!;
         this.burst.fire(this.tmp.copy(this.shelf[spot]).setY(0.05));
-        this.remove(oldest);
+        this.remove(oldest, false);
+        this.evicted = oldest;
       }
       current.slot = spot;
     }
@@ -299,6 +315,7 @@ export class ConjurePrototype implements Prototype {
     this.orbit.visible = false;
     this.deskRoot.add(pedestal, rim, this.orbit);
     this.burst = new Burst(this.deskRoot, '#b48cff');
+    this.deskRoot.add(this.progressRing.group);
 
     // A small text-only display for the conversation (no buttons, so rays ignore it).
     this.panel = new CanvasPanel({ width: 0.32, height: 0.085, columns: 1, accent: this.accent });
@@ -321,7 +338,7 @@ export class ConjurePrototype implements Prototype {
       () => {
         if (this.tapped) {
           Sfx.trash(this.tapped.holder.getWorldPosition(this.tmp));
-          this.remove(this.tapped);
+          this.deleteItems([this.tapped]);
         }
       },
     );
@@ -394,11 +411,15 @@ export class ConjurePrototype implements Prototype {
         if (last) this.create(last.prompt, last.variation + 1);
         break;
       case 'delete':
-        if (last) this.remove(last);
+        if (last) this.deleteItems([last]);
         this.status = 'Removed it.';
         break;
+      case 'undo':
+        // In Studio, "undo" means the last change in any tool.
+        if (!(this.options.undo ? this.options.undo() : this.undoLast())) this.status = 'Nothing to undo.';
+        break;
       case 'clear':
-        for (const item of [...this.items]) this.remove(item);
+        if (this.items.length) this.deleteItems([...this.items]);
         this.status = 'Cleared the desk.';
         break;
       case 'none':
@@ -412,11 +433,15 @@ export class ConjurePrototype implements Prototype {
     const holder = new Group();
     holder.add(object, blobShadow(0.13));
     const item: Item = { holder, content: object, prompt, recipe, source: 'sketch', variation, spin: false, free: false, radius: 0.08, slot: null };
+    const slots = this.slotSnapshot();
+    this.evicted = null;
     this.items.unshift(item);
     this.deskRoot.add(holder);
     holder.position.copy(PEDESTAL);
     holder.scale.setScalar(0.01);
     this.placeOnPedestal(item);
+    this.record({ kind: 'add', items: [item], evicted: this.evicted, slots });
+    this.evicted = null;
     this.burst.fire(this.tmp.copy(PEDESTAL).setY(0.06));
     Sfx.whoosh(this.deskRoot.localToWorld(this.tmp2.copy(PEDESTAL)));
     this.status = recipe === 'abstract' ? `Sketched "${prompt}" (abstract).` : `Sketched a ${recipe} for "${prompt}".`;
@@ -425,26 +450,39 @@ export class ConjurePrototype implements Prototype {
 
   private async generateRemote(item: Item, provider: Provider): Promise<void> {
     const token = ++this.token;
-    this.generating = { item, progress: 0, token };
+    this.generating = { item, progress: 0, token, started: performance.now() };
     this.status = `Asking ${provider} for "${item.prompt}"...`;
     try {
       const id = await startJob(provider, item.prompt);
-      for (let i = 0; i < 180; i += 1) {
+      if (this.generating?.token !== token) return;
+      this.status = `${provider} is making "${item.prompt}"`;
+      let misses = 0;
+      while (performance.now() - this.generating.started < GENERATION_LIMIT_MS) {
         await new Promise((r) => setTimeout(r, 2000));
         if (this.generating?.token !== token) return;
-        const job = await pollJob(provider, id);
+        let job;
+        try {
+          job = await pollJob(provider, id);
+          misses = 0;
+        } catch (error) {
+          // A dropped status check is not a failed job: try a few more times.
+          if (++misses >= 3) throw error;
+          continue;
+        }
+        if (this.generating?.token !== token) return;
         this.generating.progress = job.progress;
         if (job.status === 'failed') throw new Error(job.error ?? 'generation failed');
         if (job.status === 'succeeded' && job.modelUrl) {
-          const gltf = await AssetManager.loadGLTF(job.modelUrl);
-          if (!this.items.includes(item)) return;
+          this.status = `Loading the ${item.prompt}...`;
+          const gltf = await withTimeout(AssetManager.loadGLTF(job.modelUrl), 60_000, 'the model took too long to download');
+          if (!this.items.includes(item) || this.generating?.token !== token) return;
           this.swapContent(item, gltf.scene, provider);
           return;
         }
       }
-      throw new Error('timed out');
+      throw new Error('it took longer than 4 minutes');
     } catch (error) {
-      this.status = `${provider} could not make it (${(error as Error).message}). Keeping the sketch.`;
+      if (this.generating?.token === token) this.status = `${provider} could not make it (${(error as Error).message}). Keeping the sketch.`;
     } finally {
       if (this.generating?.token === token) this.generating = null;
       this.refresh();
@@ -459,7 +497,7 @@ export class ConjurePrototype implements Prototype {
     const center = box.getCenter(new Vector3());
     model.position.set(-center.x * scale, -box.min.y * scale, -center.z * scale);
     item.holder.remove(item.content);
-    dispose(item.content);
+    disposeObject(item.content);
     item.holder.add(model);
     item.content = model;
     item.source = source;
@@ -470,7 +508,7 @@ export class ConjurePrototype implements Prototype {
 
   /** Hand a creation to the desk: it stays there in every app and next session. */
   private pinItem(item: Item): void {
-    item.holder.updateMatrixWorld(true);
+    item.holder.updateWorldMatrix(true, false);
     const pos = item.holder.getWorldPosition(new Vector3());
     const quat = item.holder.getWorldQuaternion(new Quaternion());
     const scale = item.holder.getWorldScale(new Vector3()).x;
@@ -507,15 +545,81 @@ export class ConjurePrototype implements Prototype {
     this.itemActions.update(this.ctx.camera.getWorldPosition(this.tmp2));
   }
 
-  private remove(item: Item): void {
+  /** Take an item off the desk. `dispose` false keeps it whole so Undo can bring it back. */
+  private remove(item: Item, dispose = true): void {
     if (this.tapped === item) this.tapItem(null);
     this.items = this.items.filter((i) => i !== item);
     this.holds = this.holds.filter((h) => h.item !== item);
     if (this.generating?.item === item) this.generating = null;
     this.deskRoot.remove(item.holder);
-    if (!item.shared) dispose(item.content);
+    if (dispose && !item.shared) disposeObject(item.content);
     this.selectables.delete(item);
     this.restack();
+  }
+
+  /** Where every item sits now, so Undo can put them back. */
+  private slotSnapshot(): Map<Item, { slot: number | null; free: boolean }> {
+    return new Map(this.items.map((i) => [i, { slot: i.slot, free: i.free }]));
+  }
+
+  /** Delete items as one undo step. */
+  private deleteItems(items: Item[]): void {
+    if (!items.length) return;
+    const slots = this.slotSnapshot();
+    for (const item of items) this.remove(item, false);
+    this.record({ kind: 'remove', items, slots });
+  }
+
+  private record(entry: HistoryEntry): void {
+    this.history.push(entry);
+    this.onHistory?.('push');
+    while (this.history.length > MAX_HISTORY) {
+      const old = this.history.shift()!;
+      // Things removed that long ago can no longer come back.
+      const gone = old.kind === 'remove' ? old.items : old.evicted ? [old.evicted] : [];
+      for (const item of gone) if (!this.items.includes(item) && !item.shared) disposeObject(item.content);
+    }
+  }
+
+  undo(): boolean {
+    return this.undoLast();
+  }
+
+  canUndo(): boolean {
+    return this.history.length > 0;
+  }
+
+  /**
+   * Undo the last creation, copy or delete. `fromHost` is set when a host's
+   * shared Undo asks; false when this tool's own control did it. Returns
+   * false when there was nothing to undo.
+   */
+  undoLast(fromHost = false): boolean {
+    const entry = this.history.pop();
+    if (!entry) return false;
+    if (!fromHost) this.onHistory?.('pop');
+    if (entry.kind === 'add') {
+      for (const item of entry.items) if (this.items.includes(item)) this.remove(item);
+      if (entry.evicted && !this.items.includes(entry.evicted)) this.restore(entry.evicted);
+    } else {
+      for (const item of entry.items) if (!this.items.includes(item)) this.restore(item);
+    }
+    // Everything back to the spot it had.
+    for (const [item, at] of entry.slots) {
+      if (!this.items.includes(item)) continue;
+      item.slot = at.slot;
+      item.free = at.free;
+    }
+    this.restack();
+    this.status = entry.kind === 'add' ? 'Undid that.' : 'Brought it back.';
+    Sfx.blip(520);
+    this.refresh();
+    return true;
+  }
+
+  private restore(item: Item): void {
+    this.items.push(item);
+    this.deskRoot.add(item.holder);
   }
 
   /** Each item heads for its own spot; nothing is reshuffled. */
@@ -529,6 +633,7 @@ export class ConjurePrototype implements Prototype {
 
   update(dt: number): void {
     this.panel.update([], dt);
+    this.updateProgress(dt);
     this.updateTaps(dt);
     this.updateGestures();
     this.updateGrabs();
@@ -624,7 +729,7 @@ export class ConjurePrototype implements Prototype {
       return;
     }
     if (this.ctx.trash.take(hold.hand.holdPoint)) {
-      this.remove(hold.item);
+      this.deleteItems([hold.item]);
       this.status = `Threw away the ${hold.item.prompt}.`;
       return;
     }
@@ -709,10 +814,30 @@ export class ConjurePrototype implements Prototype {
     this.status = this.provider === 'sketch' ? 'Offline sketches only.' : `Using ${this.provider} for full models.`;
   }
 
+  /** The ring around a creation that an AI service is still making. */
+  private updateProgress(dt: number): void {
+    const g = this.generating;
+    const ring = this.progressRing;
+    ring.group.visible = g != null && this.items.includes(g.item);
+    if (!g || !ring.group.visible) return;
+    ring.group.position.copy(g.item.holder.position).setY(g.item.holder.position.y + 0.004);
+    ring.group.scale.setScalar(Math.max(0.5, g.item.holder.scale.x));
+    ring.progress = g.progress;
+    ring.update(dt);
+    // Refresh the status line about once a second (elapsed time, percent).
+    const secs = Math.floor((performance.now() - g.started) / 1000);
+    if (secs !== this.shownSecs) {
+      this.shownSecs = secs;
+      this.refresh();
+    }
+  }
+
+  private shownSecs = -1;
+
   private refresh(): void {
     let body = this.status;
     if (this.voice.listening) body = `Listening: ${this.heard || '...'}`;
-    else if (this.generating) body = `${this.status} ${Math.round(this.generating.progress * 100)}%`;
+    else if (this.generating) body = `${this.status}: ${Math.round(this.generating.progress * 100)}% (${Math.floor((performance.now() - this.generating.started) / 1000)} s)`;
     // The last exchange, or the live status.
     const log = this.chat.slice(-2).map((m) => `${m.who}: ${m.text}`);
     const live = this.voice.listening || this.generating || log.length === 0 ? [body] : [];
@@ -737,6 +862,7 @@ export class ConjurePrototype implements Prototype {
       status: this.status,
       chat: this.chat.map((m) => `${m.who}: ${m.text}`),
       holding: this.holds.length,
+      generating: this.generating ? { progress: this.generating.progress, ring: this.progressRing.group.visible } : null,
     };
   }
 
@@ -792,7 +918,7 @@ export function recolor(object: Object3D, hex: string): void {
   for (const old of swapped.keys()) old.dispose();
 }
 
-function dispose(object: Object3D): void {
+function disposeObject(object: Object3D): void {
   object.traverse((o) => {
     const mesh = o as Mesh;
     if (!mesh.isMesh) return;

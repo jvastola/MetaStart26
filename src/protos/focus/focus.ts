@@ -412,7 +412,7 @@ export class FocusPrototype implements Prototype {
       if (this.panel.contains(hand.holdPoint)) continue;
       const view = this.nearestCard(hand);
       if (!view) continue;
-      this.cards.updateMatrixWorld(true);
+      this.cards.updateWorldMatrix(true, false);
       // The card follows your hand, including its rotation.
       const pose = new HeldPose();
       pose.begin(hand, view.mesh);
@@ -484,7 +484,7 @@ export class FocusPrototype implements Prototype {
       return;
     }
     // On the board: which column?
-    this.planner.updateMatrixWorld(true);
+    this.planner.updateWorldMatrix(true, false);
     const w = this.planner.worldToLocal(world.clone());
     if (Math.abs(w.z) < 0.1 && Math.abs(w.x) < BOARD_W / 2 + 0.04 && Math.abs(w.y) < BOARD_H / 2 + 0.06) {
       const zone = BOARD_ZONES.reduce((a, z) => (Math.abs(COLUMN_X[z] - w.x) < Math.abs(COLUMN_X[a] - w.x) ? z : a));
@@ -509,8 +509,8 @@ export class FocusPrototype implements Prototype {
       const along = this.tmp2.copy(p).sub(rayOrigin).dot(rayDir);
       return this.tmp2.copy(rayOrigin).addScaledVector(rayDir, along).distanceTo(p);
     };
-    this.deskRoot.updateMatrixWorld(true);
-    this.planner.updateMatrixWorld(true);
+    this.deskRoot.updateWorldMatrix(true, false);
+    this.planner.updateWorldMatrix(true, false);
     // [zone, point, tall]: board columns are tall, so only their x distance counts.
     const targets: [Zone, Vector3, boolean][] = [
       ['focus', this.deskRoot.localToWorld(PAD.clone().setY(0.02)), false],
@@ -580,8 +580,8 @@ export class FocusPrototype implements Prototype {
 
   /** Ease every card toward its zone slot (or the hand holding it). */
   private layoutCards(dt: number): void {
-    this.cards.updateMatrixWorld(true);
-    this.planner.updateMatrixWorld(true);
+    this.cards.updateWorldMatrix(true, false);
+    this.planner.updateWorldMatrix(true, false);
     this.cards.getWorldQuaternion(this.parentQuatInv).invert();
     const counts: Record<string, number> = { inbox: 0, today: 0, done: 0 };
     const k = 1 - Math.exp(-dt * 12);
@@ -627,7 +627,7 @@ export class FocusPrototype implements Prototype {
 
   private deskLocal(world: Vector3, out: Vector3): Vector3 {
     out.copy(world);
-    this.deskRoot.updateMatrixWorld(true);
+    this.deskRoot.updateWorldMatrix(true, false);
     return this.deskRoot.worldToLocal(out);
   }
 
@@ -860,7 +860,7 @@ export class FocusPrototype implements Prototype {
     trayWorld: () => this.worldOf(TRAY),
     dialWorld: () => this.worldOf(DIAL),
     columnWorld: (zone: string) => {
-      this.planner.updateMatrixWorld(true);
+      this.planner.updateWorldMatrix(true, false);
       const p = this.planner.localToWorld(new Vector3(COLUMN_X[zone] ?? 0, SLOT_TOP, 0.01));
       return { x: p.x, y: p.y, z: p.z };
     },
@@ -873,7 +873,7 @@ export class FocusPrototype implements Prototype {
   };
 
   private worldOf(local: Vector3): { x: number; y: number; z: number } {
-    this.deskRoot.updateMatrixWorld(true);
+    this.deskRoot.updateWorldMatrix(true, false);
     const p = this.deskRoot.localToWorld(local.clone().setY(0.02));
     return { x: p.x, y: p.y, z: p.z };
   }

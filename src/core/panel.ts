@@ -180,13 +180,13 @@ export class CanvasPanel {
     const r = this.rects[index];
     const x = ((r.x + r.w / 2) / this.w - 0.5) * this.opts.width;
     const y = (0.5 - (r.y + r.h / 2) / this.h) * this.opts.height;
-    this.mesh.updateMatrixWorld(true);
+    this.mesh.updateWorldMatrix(true, false);
     return this.mesh.localToWorld(new Vector3(x, y, 0));
   }
 
   /** The panel's facing direction in world space. */
   normalWorld(): Vector3 {
-    this.mesh.updateMatrixWorld(true);
+    this.mesh.updateWorldMatrix(true, false);
     return new Vector3(0, 0, 1).transformDirection(this.mesh.matrixWorld);
   }
 

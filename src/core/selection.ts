@@ -60,6 +60,8 @@ export interface SelectionSource {
   remove(items: Selectable[]): void;
   duplicate?(items: Selectable[]): Selectable[];
   recolor?(items: Selectable[], hex: string): void;
+  /** Called as a move or scale begins (e.g. to remember where things were, for Undo). */
+  willMove?(items: Selectable[]): void;
   /** Called after a move or scale, e.g. to save. */
   moved?(items: Selectable[]): void;
   /** Hand these over to the desk, where they stay in every app. */
@@ -160,7 +162,7 @@ export class Selection {
   private alignToWorld(): void {
     const parent = this.group.parent;
     if (!parent) return;
-    parent.updateMatrixWorld(true);
+    parent.updateWorldMatrix(true, false);
     this.group.matrix.copy(parent.matrixWorld).invert();
     this.group.matrixWorldNeedsUpdate = true;
     this.group.updateMatrixWorld(true);
@@ -191,8 +193,10 @@ export class Selection {
     this.time += dt;
     this.alignToWorld();
     // Forget things that were deleted by their tool.
-    const alive = new Set(this.sources.flatMap((s) => s.items()));
-    if (this.items.some((i) => !alive.has(i))) this.setItems(this.items.filter((i) => alive.has(i)));
+    if (this.items.length) {
+      const alive = new Set(this.sources.flatMap((s) => s.items()));
+      if (this.items.some((i) => !alive.has(i))) this.setItems(this.items.filter((i) => alive.has(i)));
+    }
 
     for (const hand of this.ctx.pointers) {
       if (!hand.tracked) continue;
@@ -216,7 +220,7 @@ export class Selection {
 
   /** Desk-space copy of a world point. */
   private toDesk(world: Vector3, out: Vector3): Vector3 {
-    this.ctx.desk.updateMatrixWorld(true);
+    this.ctx.desk.updateWorldMatrix(true, false);
     return this.ctx.desk.worldToLocal(out.copy(world));
   }
 
@@ -251,7 +255,7 @@ export class Selection {
   private layoutBox(): void {
     this.boxBounds();
     const desk = this.ctx.desk;
-    desk.updateMatrixWorld(true);
+    desk.updateWorldMatrix(true, false);
     const center = desk.localToWorld(this.tmp.copy(this.min).add(this.max).multiplyScalar(0.5));
     const q = desk.getWorldQuaternion(this.q);
     const scale = desk.getWorldScale(this.tmp2);
@@ -281,10 +285,16 @@ export class Selection {
   /** True if a world point is on or next to anything selectable. */
   private nearAnything(world: Vector3): boolean {
     if (this.sources.some((s) => s.grabbable?.(world))) return true;
-    for (const item of this.sources.flatMap((s) => s.items())) {
-      const r = item.bounds(this.tmp);
-      const d = item.distance ? item.distance(world) : this.tmp.distanceTo(world) - r;
-      if (d < NEAR_THING) return true;
+    for (const s of this.sources) {
+      for (const item of s.items()) {
+        let d: number;
+        if (item.distance) d = item.distance(world);
+        else {
+          const r = item.bounds(this.tmp);
+          d = this.tmp.distanceTo(world) - r;
+        }
+        if (d < NEAR_THING) return true;
+      }
     }
     return false;
   }
@@ -370,7 +380,7 @@ export class Selection {
   private snapshot(): Map<Selectable, Matrix4> {
     const map = new Map<Selectable, Matrix4>();
     for (const i of this.items) {
-      i.object.updateMatrixWorld(true);
+      i.object.updateWorldMatrix(true, false);
       map.set(i, i.object.matrixWorld.clone());
     }
     return map;
@@ -405,6 +415,12 @@ export class Selection {
       if (!hand.tracked || !hand.grabStarted || this.hold?.hands.includes(hand)) continue;
       if (!this.hitAny(hand.holdPoint)) continue;
       const hands = this.hold ? [this.hold.hands[0], hand] : [hand];
+      if (!this.hold) {
+        for (const source of this.sources) {
+          const mine = this.items.filter((i) => i.source === source);
+          if (mine.length) source.willMove?.(mine);
+        }
+      }
       this.beginHold(hands);
       hand.clearEdges();
       Sfx.pinch(hand.isMouse ? undefined : hand.holdPoint);
@@ -449,7 +465,7 @@ export class Selection {
       const m = delta.clone().multiply(start);
       const parent = item.object.parent;
       if (parent) {
-        parent.updateMatrixWorld(true);
+        parent.updateWorldMatrix(true, false);
         m.premultiply(parent.matrixWorld.clone().invert());
       }
       m.decompose(item.object.position, item.object.quaternion, world);
@@ -543,7 +559,7 @@ export class Selection {
     lo.subScalar(0.008);
     hi.addScalar(0.008);
     const desk = this.ctx.desk;
-    desk.updateMatrixWorld(true);
+    desk.updateWorldMatrix(true, false);
     this.outline.position.copy(desk.localToWorld(this.tmp.copy(lo).add(hi).multiplyScalar(0.5)));
     desk.getWorldQuaternion(this.outline.quaternion);
     const scale = desk.getWorldScale(this.tmp2);

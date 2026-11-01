@@ -72,6 +72,10 @@ export interface Prototype {
   update(dt: number): void;
   /** True while the prototype owns the pinches (holding, drawing...): the host then skips the frame gesture. */
   holding?(): boolean;
+  /** Undo this app's last action (the hand menu's Undo). False if there was nothing to undo. */
+  undo?(): boolean;
+  /** True when there is something to undo. */
+  canUndo?(): boolean;
   /** What each pinch does right now, shown as small icons by the fingertips (defaults: press / move). */
   fingerHints?(hand: HandState): { index?: string | null; middle?: string | null } | null;
   /** Show the desk's Home button (default true; Home itself hides it, the tutorial shows it at the end). */

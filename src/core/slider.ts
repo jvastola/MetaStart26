@@ -74,7 +74,7 @@ export class DeskSlider {
 
   /** Track end points in world space. */
   private ends(): [Vector3, Vector3] {
-    this.group.updateMatrixWorld(true);
+    this.group.updateWorldMatrix(true, false);
     return [this.group.localToWorld(new Vector3(-this.length / 2, 0, 0)), this.group.localToWorld(new Vector3(this.length / 2, 0, 0))];
   }
 
@@ -84,7 +84,7 @@ export class DeskSlider {
 
   update(pointers: readonly HandState[]): void {
     if (!this.group.visible) return;
-    this.knob.updateMatrixWorld(true);
+    this.knob.updateWorldMatrix(true, false);
     const knobWorld = this.knob.getWorldPosition(this.tmp).clone();
     if (this.drag == null) {
       let near = Infinity;
@@ -158,7 +158,7 @@ export class DeskSlider {
 
   /** World position of a slider value, for tests. */
   worldAt(value: number): Vector3 {
-    this.group.updateMatrixWorld(true);
+    this.group.updateWorldMatrix(true, false);
     return this.group.localToWorld(new Vector3((value - 0.5) * this.length, 0.004, 0));
   }
 }

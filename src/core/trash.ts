@@ -48,7 +48,7 @@ export class TrashBin {
   /** True if a world point is over the bin's mouth. */
   over(world: Vector3): boolean {
     if (!this.group.visible) return false;
-    this.group.updateMatrixWorld(true);
+    this.group.updateWorldMatrix(true, false);
     const q = this.group.worldToLocal(this.local.copy(world));
     return Math.hypot(q.x, q.z) < REACH_XZ && q.y < REACH_Y && q.y > -0.03;
   }

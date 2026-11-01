@@ -35,7 +35,7 @@ function describe(entity: Entity): PlaneInfo | null {
   const object = entity.object3D;
   const plane = entity.getValue(XRPlane, '_plane') as XRPlane | undefined;
   if (object == null || plane == null) return null;
-  object.updateMatrixWorld(true);
+  object.updateWorldMatrix(true, false);
   object.getWorldQuaternion(tmpQ);
   const normal = tmpN.copy(UP).applyQuaternion(tmpQ).clone();
   let minX = Infinity;

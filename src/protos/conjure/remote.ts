@@ -31,6 +31,35 @@ export interface Gen3DSettings {
 }
 
 const SETTINGS_KEY = 'gen3d-settings-v1';
+/** Any single request to a provider or the proxy gives up after this long. */
+const REQUEST_TIMEOUT_MS = 20_000;
+
+/** Reject if `promise` has not settled within `ms`. */
+export function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
+/** fetch with a time limit, and a plain message when it runs out. */
+async function timedFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+  } catch (error) {
+    if ((error as Error).name === 'TimeoutError') throw new Error('the service did not answer in time');
+    throw error;
+  }
+}
 
 export function loadSettings(): Gen3DSettings {
   const saved = store.get<Gen3DSettings | null>(SETTINGS_KEY, null);
@@ -60,7 +89,7 @@ export function availableProviders(): Provider[] {
 export async function startJob(provider: Provider, prompt: string): Promise<string> {
   const endpoint = gen3dEndpoint();
   if (endpoint) {
-    const res = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ provider, prompt }) });
+    const res = await timedFetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ provider, prompt }) });
     const body = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
     if (!res.ok || !body.id) throw new Error(body.error ?? `Generation request failed (${res.status})`);
     return body.id;
@@ -85,7 +114,7 @@ export async function startJob(provider: Provider, prompt: string): Promise<stri
 export async function pollJob(provider: Provider, id: string): Promise<JobStatus> {
   const endpoint = gen3dEndpoint();
   if (endpoint) {
-    const res = await fetch(`${endpoint}?provider=${provider}&id=${encodeURIComponent(id)}`);
+    const res = await timedFetch(`${endpoint}?provider=${provider}&id=${encodeURIComponent(id)}`);
     const body = (await res.json().catch(() => ({}))) as Partial<JobStatus> & { error?: string };
     if (!res.ok) return { status: 'failed', progress: 0, error: body.error ?? `Status check failed (${res.status})` };
     let modelUrl = body.modelUrl;
@@ -120,8 +149,9 @@ function requireKey(provider: Provider): string {
 async function direct<T>(url: string, key: string, init: RequestInit = {}): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(url, { ...init, headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' } });
-  } catch {
+    res = await timedFetch(url, { ...init, headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' } });
+  } catch (error) {
+    if ((error as Error).message === 'the service did not answer in time') throw error;
     throw new Error('the provider blocked a direct browser request (CORS); use the proxy instead');
   }
   const body = (await res.json().catch(() => ({}))) as T & { message?: string };

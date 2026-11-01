@@ -13,6 +13,8 @@ describe('parseIntent', () => {
     ['another one', { kind: 'again' }],
     ['try again', { kind: 'again' }],
     ['delete it', { kind: 'delete' }],
+    ['undo', { kind: 'undo' }],
+    ['undo that', { kind: 'undo' }],
     ['clear everything', { kind: 'clear' }],
     ['spin it', { kind: 'spin' }],
     ['', { kind: 'none' }],

@@ -31,6 +31,7 @@ export type Intent =
   | { kind: 'spin' }
   | { kind: 'again' }
   | { kind: 'delete' }
+  | { kind: 'undo' }
   | { kind: 'clear' }
   | { kind: 'none' };
 
@@ -43,7 +44,8 @@ export function parseIntent(raw: string): Intent {
   if (!text) return { kind: 'none' };
 
   if (/\b(clear|delete|remove) (all|everything)\b/.test(text)) return { kind: 'clear' };
-  if (new RegExp(`\\b(delete|remove|get rid of|undo) ${REFERS}\\b`).test(text) || /^(delete|remove|undo)$/.test(text)) {
+  if (new RegExp(`^(undo|undo ${REFERS}|go back)$`).test(text)) return { kind: 'undo' };
+  if (new RegExp(`\\b(delete|remove|get rid of) ${REFERS}\\b`).test(text) || /^(delete|remove)$/.test(text)) {
     return { kind: 'delete' };
   }
   if (/\b(another|again|one more|try again|variation|different one)\b/.test(text)) return { kind: 'again' };

@@ -21,6 +21,8 @@ interface TileSpec {
   label: string;
   sub: string;
   accent: string;
+  /** The main app: a bigger tile with a "Start here" badge. */
+  featured?: boolean;
 }
 
 /** Simple vector icons, drawn into a square of size `s` at the origin. */
@@ -171,6 +173,7 @@ class AppTile {
   private readonly lastDepth = { left: 1, right: 1 };
   private readonly local = new Vector3();
   private readonly base = new Vector3();
+  private size = 1;
 
   constructor(readonly spec: TileSpec) {
     const canvas = document.createElement('canvas');
@@ -194,6 +197,17 @@ class AppTile {
     c.textAlign = 'center';
     c.textBaseline = 'top';
     c.fillText(spec.label, s / 2, s + 4, s - 20);
+    if (spec.featured) {
+      c.font = '700 34px system-ui, sans-serif';
+      const text = 'START HERE';
+      const w = c.measureText(text).width + 36;
+      roundRect(c, (s - w) / 2, 30, w, 50, 25);
+      c.fillStyle = 'rgba(20,22,27,0.85)';
+      c.fill();
+      c.fillStyle = '#ffffff';
+      c.textBaseline = 'middle';
+      c.fillText(text, s / 2, 57);
+    }
     const texture = new CanvasTexture(canvas);
     texture.colorSpace = SRGBColorSpace;
     texture.anisotropy = 4;
@@ -202,7 +216,8 @@ class AppTile {
     this.mesh.renderOrder = 10;
   }
 
-  place(x: number, y: number, z: number, yaw: number): void {
+  place(x: number, y: number, z: number, yaw: number, size = 1): void {
+    this.size = size;
     this.base.set(x, y, z);
     this.mesh.position.copy(this.base);
     this.mesh.rotation.set(-0.18, yaw, 0, 'YXZ');
@@ -210,7 +225,7 @@ class AppTile {
 
   /** Returns true when pressed this frame. */
   update(pointers: readonly HandState[], dt: number): boolean {
-    this.mesh.updateMatrixWorld(true);
+    this.mesh.updateWorldMatrix(true, false);
     let hover = false;
     let pressed = false;
     for (const p of pointers) {
@@ -236,7 +251,7 @@ class AppTile {
     this.hover = hover;
     // Lift toward the user and grow a little on hover.
     this.hoverAmount += ((hover ? 1 : 0) - this.hoverAmount) * Math.min(1, dt * 14);
-    this.mesh.scale.setScalar(1 + this.hoverAmount * 0.07);
+    this.mesh.scale.setScalar(this.size * (1 + this.hoverAmount * 0.07));
     this.mesh.position.copy(this.base);
     this.mesh.translateZ(this.hoverAmount * 0.012);
     return pressed;
@@ -280,26 +295,28 @@ export class HubPrototype implements Prototype {
     this.ctx = ctx;
     this.header = new CanvasPanel({ width: 0.44, height: 0.055, columns: 1, accent: this.accent });
     this.header.mesh.name = 'HomeHeader';
-    this.header.mesh.position.set(0, 0.33, -0.15);
+    this.header.mesh.position.set(0, 0.375, -0.15);
     this.header.mesh.rotation.x = -0.18;
     this.deskRoot.add(this.header.mesh);
 
-    const specs: TileSpec[] = [
-      ...this.entries().map((p) => ({ id: p.id, label: p.title, sub: p.tagline, accent: p.accent })),
-      { id: 'intro', label: 'Tutorial', sub: 'Learn the hand moves', accent: ACCENTS.intro },
+    // Studio is the main app: one big tile on top, the single-purpose tools below.
+    const apps = this.entries().map((p) => ({ id: p.id, label: p.title, sub: p.tagline, accent: p.accent }));
+    const featured = apps.filter((a) => a.id === 'studio').map((a) => ({ ...a, featured: true }));
+    const rest: TileSpec[] = [...apps.filter((a) => a.id !== 'studio'), { id: 'intro', label: 'Tutorial', sub: 'Learn the hand moves', accent: ACCENTS.intro }];
+    const rows: [TileSpec[], number, number][] = [
+      [featured, 0.24, 1.45],
+      [rest, 0.088, 0.82],
     ];
-    // Two rows in a gentle arc: four on top, the rest below.
-    const rows = [specs.slice(0, 4), specs.slice(4)];
-    rows.forEach((row, r) => {
+    for (const [row, y, size] of rows) {
       row.forEach((spec, i) => {
         const tile = new AppTile(spec);
-        const x = (i - (row.length - 1) / 2) * (TILE_W + 0.025);
+        const x = (i - (row.length - 1) / 2) * (TILE_W * size + 0.018);
         const z = -0.13 + Math.abs(x) * 0.25;
-        tile.place(x, 0.235 - r * (TILE_H + 0.02), z, -x * 1.2);
+        tile.place(x, y, z, -x * 1.2, size);
         this.deskRoot.add(tile.mesh);
         this.tiles.push(tile);
       });
-    });
+    }
   }
 
   enter(): void {
@@ -346,7 +363,7 @@ export class HubPrototype implements Prototype {
     tileWorld: (id: string) => {
       const tile = this.tiles.find((t) => t.spec.id === id);
       if (!tile) return null;
-      tile.mesh.updateMatrixWorld(true);
+      tile.mesh.updateWorldMatrix(true, false);
       const p = tile.mesh.getWorldPosition(new Vector3());
       const n = new Vector3(0, 0, 1).transformDirection(tile.mesh.matrixWorld);
       return { x: p.x, y: p.y, z: p.z, nx: n.x, ny: n.y, nz: n.z };

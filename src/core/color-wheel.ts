@@ -72,7 +72,7 @@ export class ColorWheel {
   }
 
   update(pointers: readonly HandState[]): void {
-    this.mesh.updateMatrixWorld(true);
+    this.mesh.updateWorldMatrix(true, false);
     if (this.drag) {
       const p = this.drag.pointer;
       // A pinch-drag ends when the pinch opens; a touch-drag when the finger lifts off.
@@ -252,7 +252,7 @@ export class ColorWheel {
     const halfH = (this.size * (PX + ROW)) / PX / 2;
     const lx = (x * this.size) / 2;
     const ly = halfH - ((PX / 2 - (y * PX) / 2) * this.size) / PX;
-    this.mesh.updateMatrixWorld(true);
+    this.mesh.updateWorldMatrix(true, false);
     return this.mesh.localToWorld(new Vector3(lx, ly, 0));
   }
 }

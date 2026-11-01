@@ -285,7 +285,7 @@ export class DeskWindow {
       return;
     }
     const [cx, cy, cz] = this.opts.reach.center;
-    this.root.updateMatrixWorld(true);
+    this.root.updateWorldMatrix(true, false);
     const center = this.root.localToWorld(this.tmp.set(cx, cy, cz));
     const reach = this.opts.reach.radius * this.root.scale.x + 0.1;
     const near = pointers.some((p) => p.tracked && (p.isMouse ? pointerDistance(p, center) < reach : Math.min(p.indexTip.distanceTo(center), p.palm.distanceTo(center)) < reach));
@@ -312,7 +312,7 @@ export class DeskWindow {
   private barEnds(): [Vector3, Vector3] {
     const [hx, hy, hz] = this.opts.handle.position;
     const len = this.opts.handle.length;
-    this.root.updateMatrixWorld(true);
+    this.root.updateWorldMatrix(true, false);
     return [this.root.localToWorld(this.a.set(hx - len / 2, hy, hz)), this.root.localToWorld(this.b.set(hx + len / 2, hy, hz))];
   }
 
@@ -338,7 +338,7 @@ export class DeskWindow {
 
   /** World centre of the handle bar and its buttons, for tests. */
   debug(): { handle: Vector3; pin: Vector3; focus: Vector3; hide: Vector3 } {
-    this.root.updateMatrixWorld(true);
+    this.root.updateWorldMatrix(true, false);
     return {
       handle: this.root.localToWorld(new Vector3(...this.opts.handle.position)),
       pin: this.pinButton.worldCenter(),

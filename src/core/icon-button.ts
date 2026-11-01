@@ -59,6 +59,14 @@ export interface IconButtonOptions {
   radius?: number;
 }
 
+/** True when `p` is more than 20 cm from the origin of world matrix `e`. */
+function farFrom(p: Vector3, e: ArrayLike<number>): boolean {
+  const dx = p.x - e[12];
+  const dy = p.y - e[13];
+  const dz = p.z - e[14];
+  return dx * dx + dy * dy + dz * dz > 0.04;
+}
+
 function isShown(o: { visible: boolean; parent: unknown }): boolean {
   let n = o as { visible: boolean; parent: unknown } | null;
   while (n) {
@@ -96,6 +104,7 @@ export class IconButton {
   private hoverAmount = 0;
   private push = 0;
   private readonly local = new Vector3();
+  private readonly local2 = new Vector3();
   private readonly q = new Quaternion();
   /** Set to make press-and-hold slide a value. */
   hold: HoldSlider | null = null;
@@ -233,7 +242,7 @@ export class IconButton {
 
   /** World centre of the face, for tests. */
   worldCenter(): Vector3 {
-    this.group.updateMatrixWorld(true);
+    this.group.updateWorldMatrix(true, false);
     return this.group.localToWorld(new Vector3(0, HEIGHT, 0));
   }
 
@@ -243,8 +252,15 @@ export class IconButton {
   }
 
   private rayHit(origin: Vector3, dir: Vector3): number | null {
-    this.group.updateMatrixWorld(true);
-    const o = this.group.worldToLocal(this.local.copy(origin)).clone();
+    this.group.updateWorldMatrix(true, false);
+    // Cheap reject: the ray passes nowhere near the button (dir is unit length).
+    const e = this.group.matrixWorld.elements;
+    const ex = e[12] - origin.x;
+    const ey = e[13] - origin.y;
+    const ez = e[14] - origin.z;
+    const along = ex * dir.x + ey * dir.y + ez * dir.z;
+    if (along < 0 || ex * ex + ey * ey + ez * ez - along * along > 0.01) return null;
+    const o = this.group.worldToLocal(this.local2.copy(origin));
     const d = this.group.worldToLocal(this.local.copy(origin).add(dir)).sub(o);
     if (Math.abs(d.y) < 1e-6) return null;
     const t = (HEIGHT - o.y) / d.y;
@@ -374,7 +390,7 @@ export class IconButton {
       this.updateHold(dt);
       hover = true;
     } else if (!this._disabled) {
-      this.group.updateMatrixWorld(true);
+      this.group.updateWorldMatrix(true, false);
       for (const p of pointers) {
         if (!p.tracked) continue;
         if (p.isMouse) {
@@ -389,8 +405,14 @@ export class IconButton {
           }
           continue;
         }
+        // Cheap reject first: a hand nowhere near this button cannot poke or pinch it.
+        const e = this.group.matrixWorld.elements;
+        if (farFrom(p.indexTip, e) && farFrom(p.pinchPoint, e)) {
+          this.lastY.set(p, 0);
+          continue;
+        }
         // Poke: the fingertip comes down onto the face.
-        const tip = this.group.worldToLocal(this.local.copy(p.indexTip));
+        const tip =this.group.worldToLocal(this.local.copy(p.indexTip));
         const inside = Math.hypot(tip.x, tip.z) < this.radius * 1.2;
         if (inside && tip.y < 0.05 && tip.y > -0.02) hover = true;
         // Arm while the fingertip is above the face (or off it); press as it comes down.

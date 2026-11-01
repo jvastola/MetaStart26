@@ -188,7 +188,7 @@ export class FrameCamera {
     camera.position.copy(eye);
     camera.lookAt(target);
     camera.updateProjectionMatrix();
-    camera.updateMatrixWorld(true);
+    camera.updateWorldMatrix(true, false);
 
     // Hide UI and helpers, and paint a neutral previs backdrop.
     const hidden: Object3D[] = CanvasPanel.all.map((p) => p.mesh);

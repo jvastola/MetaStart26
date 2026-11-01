@@ -419,7 +419,7 @@ export class IntroPrototype implements Prototype {
     };
     const [title, body] = copy[this.step];
     this.panel.setText(`Welcome - step ${n + 1} of ${STEPS.length}`, title, body);
-    const buttons = [{ id: 'skip', label: this.step === 'home' ? 'Open the lab' : 'Skip tutorial' }, ...(this.step === 'menu' && mouse ? [{ id: 'next', label: 'Continue', tone: 'primary' as const }] : [])];
+    const buttons = [{ id: 'skip', label: this.step === 'home' ? 'Open Studio' : 'Skip tutorial' }, ...(this.step === 'menu' && mouse ? [{ id: 'next', label: 'Continue', tone: 'primary' as const }] : [])];
     this.panel.setButtons(buttons);
     this.panel.invalidate();
   }
@@ -544,7 +544,7 @@ export class IntroPrototype implements Prototype {
                 : what === 'home'
                   ? HOME.clone().setY(0.009)
                   : DIAL.clone().setY(0.02);
-      this.deskRoot.updateMatrixWorld(true);
+      this.deskRoot.updateWorldMatrix(true, false);
       const p = this.deskRoot.localToWorld(local);
       return { x: p.x, y: p.y, z: p.z };
     },

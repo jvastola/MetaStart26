@@ -176,7 +176,7 @@ export class DeskObjects {
 
   /** Add a made object at a world pose, pinned (locked) by default. */
   private adopt(obj: DeskObject, worldPos: Vector3, worldQuat: Quaternion, worldScale: number, pinned = true): DeskObject {
-    this.group.updateMatrixWorld(true);
+    this.group.updateWorldMatrix(true, false);
     this.group.add(obj.holder);
     obj.holder.position.copy(this.group.worldToLocal(worldPos.clone()));
     const parentQ = this.group.getWorldQuaternion(obj.holder.quaternion.clone()).invert();
@@ -253,7 +253,7 @@ export class DeskObjects {
       reach: 0.025,
       // Distance to the line itself, so a pinned stroke never claims a pinch beside it.
       hit: (hand, point) => {
-        holder.updateMatrixWorld(true);
+        holder.updateWorldMatrix(true, false);
         let best = Infinity;
         const w = new Vector3();
         for (const q of stroke.points) {
@@ -293,7 +293,7 @@ export class DeskObjects {
     const canvas = this.readShot(shot);
     if (!canvas) return null;
     const obj = this.buildPhoto(canvas, width, canvas.toDataURL('image/jpeg', 0.82));
-    this.group.updateMatrixWorld(true);
+    this.group.updateWorldMatrix(true, false);
     this.group.add(obj.holder);
     obj.holder.position.copy(this.group.worldToLocal(at.clone()));
     // Never below the desk top.

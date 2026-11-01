@@ -11,6 +11,7 @@
  *   - toasts, pause on system-menu blur, and a window.lab test hook.
  */
 
+import { PerfMeter } from './core/perf.js';
 import {
   createSystem,
   CylinderGeometry,
@@ -92,6 +93,7 @@ export class LabSystem extends createSystem({
   private rays!: HandRays;
   private readonly eye = new Vector3();
   private skeletons: HandSkeleton[] = [];
+  private readonly perf = new PerfMeter();
   private coach!: CanvasPanel;
   private coachTime = 0;
   private readonly forward = new Vector3();
@@ -206,7 +208,7 @@ export class LabSystem extends createSystem({
     this.buildChrome();
     this.setupMouse();
 
-    const hub = new HubPrototype(() => this.protos.filter((p) => p.id !== 'hub' && p.id !== 'intro'), (id) => this.go(id));
+    const hub = new HubPrototype(() => this.protos.filter((p) => p.id !== 'hub' && p.id !== 'intro' && p.id !== 'golf'), (id) => this.go(id));
     this.protos = [
       hub,
       new FocusPrototype(),
@@ -216,7 +218,7 @@ export class LabSystem extends createSystem({
       new SketchPrototype(),
       new GolfPrototype(),
       new StudioPrototype(),
-      new IntroPrototype(() => this.go('hub')),
+      new IntroPrototype(() => this.go('studio')),
     ];
     for (const p of this.protos) {
       p.deskRoot.visible = false;
@@ -243,8 +245,8 @@ export class LabSystem extends createSystem({
 
     this.placeDesktop();
     const requested = new URLSearchParams(location.search).get('p');
-    // First launch opens the tutorial; ?p=<id> always wins.
-    const first = store.get<boolean>(INTRO_DONE_KEY, false) ? 'hub' : 'intro';
+    // First launch opens the tutorial, later ones Studio; ?p=<id> always wins.
+    const first = store.get<boolean>(INTRO_DONE_KEY, false) ? 'studio' : 'intro';
     this.go(requested && this.protos.some((p) => p.id === requested) ? requested : first);
     this.buildDomNav();
     this.buildEnterButton();
@@ -422,7 +424,7 @@ export class LabSystem extends createSystem({
     // Callers may pass a scratch vector that we reuse below.
     const worldPos = position.clone();
     // Poses are stored relative to the anchored room, which only has yaw.
-    this.room.updateMatrixWorld(true);
+    this.room.updateWorldMatrix(true, false);
     const roomForward = this.room.getWorldDirection(new Vector3());
     const roomYawAngle = Math.atan2(roomForward.x, roomForward.z);
     const local = this.room.worldToLocal(this.tmp.copy(worldPos));
@@ -512,14 +514,14 @@ export class LabSystem extends createSystem({
       return;
     }
     pose.apply(hand, this.desk, { upright: true });
-    this.desk.updateMatrixWorld(true);
+    this.desk.updateWorldMatrix(true, false);
     this.room3d.fitLeg(this.desk.getWorldPosition(this.tmp).y);
     if (!this.realWall) this.placeDefaultWall();
   }
 
   /** Distance from a pointer to the grab bar (ray distance for the mouse). */
   private barDistance(p: HandState): number {
-    this.desk.updateMatrixWorld(true);
+    this.desk.updateWorldMatrix(true, false);
     const a = this.desk.localToWorld(this.tmp.set(-BAR_HALF, BAR_Y, BAR_Z));
     const b = this.desk.localToWorld(this.tmp2.set(BAR_HALF, BAR_Y, BAR_Z));
     const ab = b.sub(a);
@@ -545,11 +547,17 @@ export class LabSystem extends createSystem({
   // ------------------------------------------------------------ frame
 
   update(delta: number): void {
+    this.perf.begin();
+    this.frameUpdate(delta);
+    this.perf.end();
+  }
+
+  private frameUpdate(delta: number): void {
     const dt = Math.min(delta, 0.05);
     this.ctx.time += dt;
     this.player.head.getWorldPosition(this.head);
     if (this.ctx.immersive) {
-      this.player.updateMatrixWorld(true);
+      this.player.updateWorldMatrix(true, false);
       this.hands.update(this.world.xrFrame, this.world.xrReferenceSpace, this.player.matrixWorld, dt);
     }
     this.updateMouse();
@@ -638,6 +646,7 @@ export class LabSystem extends createSystem({
     room.label = this.passthrough ? 'Passthrough (press for a virtual room)' : 'Virtual room (press for passthrough)';
     room.active = this.passthrough;
     b.get('help')!.disabled = !(this.active?.howTo?.length ?? 0);
+    b.get('undo')!.disabled = !(this.active?.canUndo?.() ?? false);
   }
 
   /**
@@ -647,7 +656,7 @@ export class LabSystem extends createSystem({
   private setPassthrough(on: boolean, quiet = false): void {
     this.passthrough = on;
     store.set(PASSTHROUGH_KEY, on);
-    this.desk.updateMatrixWorld(true);
+    this.desk.updateWorldMatrix(true, false);
     this.room3d.fitLeg(this.desk.getWorldPosition(this.tmp).y);
     this.room3d.setVisible(!on);
     if (!quiet) this.toast(on ? 'Passthrough on: your real room.' : 'Passthrough off: virtual room.');
@@ -743,12 +752,14 @@ export class LabSystem extends createSystem({
     this.palmMenu = new PalmMenu([
       { id: 'home', icon: 'home', label: 'Home' },
       { id: 'help', icon: 'help', label: 'How to use this app' },
+      { id: 'undo', icon: 'undo', label: 'Undo' },
       { id: 'mute', icon: 'sound', label: 'Sound' },
       { id: 'room', icon: 'eye', label: 'Passthrough' },
     ]);
     this.palmMenu.onPress = (id) => {
       if (id === 'home') this.go('hub');
       if (id === 'help' && this.active) this.showHowTo(this.active, true);
+      if (id === 'undo' && !(this.active?.undo?.() ?? false)) this.toast('Nothing to undo.');
       if (id === 'mute') {
         Sfx.setMuted(!Sfx.muted);
         this.toast(Sfx.muted ? 'Sound off.' : 'Sound on.');
@@ -784,6 +795,8 @@ export class LabSystem extends createSystem({
     this.desk.add(this.keyboard.group);
     this.cursors = [new HandCursor(), new HandCursor()];
     for (const c of this.cursors) chrome.add(c.group);
+    // ?perf=1 shows frame timing in the corner of your view (on-device tuning).
+    if (new URLSearchParams(location.search).get('perf') === '1') this.perf.show(this.camera);
     // ?skeleton=1 draws procedural hands (recordings, emulator without hand models).
     if (new URLSearchParams(location.search).get('skeleton') === '1') {
       this.hands.readAllJoints = true;
@@ -877,7 +890,7 @@ export class LabSystem extends createSystem({
       return;
     }
     const cam = this.camera;
-    cam.updateMatrixWorld(true);
+    cam.updateWorldMatrix(true, false);
     cam.getWorldPosition(m.rayOrigin);
     m.rayDir.copy(this.mouseNdc).unproject(cam).sub(m.rayOrigin).normalize();
     m.tracked = true;
@@ -991,6 +1004,7 @@ export class LabSystem extends createSystem({
         return { x: p.x, y: p.y, z: p.z, nx: n.x, ny: n.y, nz: n.z };
       },
       fingerHints: () => this.fingerHints.debug(),
+      perf: () => this.perf.stats(),
       /** Desktop preview of the hand menu, floating in front of the camera (for screenshots). */
       previewPalm: () => {
         const eye = this.camera.getWorldPosition(new Vector3());
@@ -1076,7 +1090,7 @@ export class LabSystem extends createSystem({
       deskSelect: (i: number) => this.deskObjects.select(this.deskObjects.objects[i] ?? null),
       /** Trash bin: world position of its mouth, items thrown away, shown. */
       trash: () => {
-        this.desk.updateMatrixWorld(true);
+        this.desk.updateWorldMatrix(true, false);
         const p = this.desk.localToWorld(TRASH_POS.clone().setY(0.08));
         return { x: p.x, y: p.y, z: p.z, count: this.trashBin.count, visible: this.trashBin.group.visible };
       },

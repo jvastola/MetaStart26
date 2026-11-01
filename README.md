@@ -17,8 +17,8 @@ division.
 | 3 | **Shot Board** | Productivity / creative | Storyboard a scene on your desk. Frame shots with both hands like a director, anywhere in the lab; they collect on the storyboard as numbered, framed 3D cards on an arc, with play and remove-last buttons on a ledge below. |
 | 4 | **Clay** | Productivity / creative | Sculpt with your bare fingertips on a turntable. Tools are round icon buttons in an arc on the desk (sculpt, smooth, inflate, mirror, auto spin, colour, undo, reset, print, clear prints, export); sliders for size (0.5x to 5x) and brush size, or grab the turntable base and raise or lower your hand to resize. **Print copy** builds a solid copy you can pick up; the pin in front of a print moves it onto the desk, where it stays in every app and next session. |
 | 5 | **Sketch** | Productivity / creative | Pinch to draw in the air with either hand or both; grab a stroke to move it, both hands to scale. Loop around strokes to select several and move, scale, duplicate, paint or delete them together. Icon buttons for colour, brush size, erase, select, undo, clear. |
-| 6 | **Desk Links** | Gaming (reference) | Fingertip mini golf on your desk, kept for comparing hand mechanics. |
-| 7 | **Studio** | Productivity / creative | A small desk OS. A dock of icons opens tools as windows (Draw, Conjure, Clay, Storyboard), several at once. Each window's bar moves it and has **pin**, **focus** and **hide**: unpinned windows fold their controls away until you reach toward them, and focus gives one tool the whole desk. Select across tools: strokes, creations and prints together. |
+| 6 | **Desk Links** | Gaming (reference) | Fingertip mini golf on your desk, kept for comparing hand mechanics. Not on Home; open with `?p=golf`. |
+| 7 | **Studio** | Productivity / creative | A small desk OS. A dock of icons opens tools as windows (Draw, Conjure, Clay, Storyboard), several at once. Each window's bar moves it and has **pin**, **focus** and **hide**: unpinned windows fold their controls away until you reach toward them, and focus gives one tool the whole desk. Select across tools: strokes, creations and prints together.  **The main app**: Home's big tile, and where the tutorial and later visits open. One **Undo** (dock, hand menu, or say "undo") steps back through every tool in order: strokes drawn or moved, creations made or deleted, clay sculpting. |
 
 ## Run it
 
@@ -35,6 +35,10 @@ npm run build
   Sketch stroke). Use the buttons at the bottom of the page or keys `0`-`8`
   to switch prototypes, or open `?p=focus` (also `conjure`, `shotboard`,
   `clay`, `sketch`, `golf`, `studio`, `hub`).
+- **`?perf=1`** shows frame timing in the corner of your view: frames per
+  second, the slowest recent frame, and how long the app's own update took.
+  Use it on the Quest to check the 72 fps target. Tests read the same numbers
+  from `window.lab.perf()`.
 - **`?skeleton=1`** draws procedural hands. Use it for recordings, or when the
   stock hand models cannot load (they come from a CDN).
 - **Quest on the same Wi-Fi:** run `npx @iwsdk/cli dev status` and open the
@@ -74,11 +78,14 @@ there. AI generation needs the `api/gen3d.ts` proxy on Vercel.
    4. **select**: hold a grab in empty air and stretch a box over three cubes;
    5. turn your left palm toward you to open the menu;
    6. press the **Home** button on the desk's front-left corner.
-4. The hub opens. The first time you enter each prototype, a **How to** card
-   explains it in three lines. Bring it back any time with palm up, then
-   **How to**.
+4. **Studio** opens (the main app). Later visits go straight to Studio. Home
+   (the house button, or palm up then Home) shows Studio as a big **Start
+   here** tile with the single-purpose tools below it. The first time you
+   enter each prototype, a **How to** card explains it in three lines. Bring
+   it back any time with palm up, then **How to**.
 
-Replay the tutorial from the hub's **Tutorial** button. To reset first-use
+Desk Links (mini golf) is no longer on Home; open it with `?p=golf`.
+Replay the tutorial from Home's **Tutorial** button. To reset first-use
 state, clear the site's storage.
 
 ## How the hands work
@@ -166,7 +173,7 @@ Conjure creations.
 | Grab Clay's turntable base and move your hand up or down | Resize the sculpture (20 cm covers the whole range) |
 | Poke keys on the desk keyboard | Type; **Mic** dictates. Opens from Desk Focus **New card** and Conjure **Type** |
 | Poke the house or **?** button on the desk's front-left corner | Home, or this app's how-to card (in every app) |
-| Turn your left palm toward your face | Hand menu (a halo of round buttons): Home, How to, Sound, Passthrough / Virtual room |
+| Turn your left palm toward your face | Hand menu (a halo of round buttons): Home, How to, Undo, Sound, Passthrough / Virtual room. Undo is greyed out when the app has nothing to undo |
 | Thumb microgestures (thumb tap, swipe on the index finger) | Shortcuts: start/pause, next card, undo, bigger/smaller, rotate |
 
 **Controllers work too**, though hands are the design target:
@@ -248,6 +255,13 @@ stored only in this browser and sent only to that provider; Conjure then calls
 the provider directly. Use a key you can revoke. Direct calls only work if the
 provider allows requests from browsers (CORS); if it does not, Conjure shows
 that error and the Vercel proxy is the way round it.
+
+While a model is being made, a ring of dots around the creation fills with
+the provider's progress (a bright dot keeps circling so it never looks
+frozen), and the status line shows the percentage and elapsed seconds. Each
+request gives up after 20 s; a status check that fails is retried up to three
+times; after 4 minutes Conjure stops waiting. In every failure case the
+offline sketch stays and the status says why.
 
 Neither the proxy nor the direct-key path has been **run against the live Meshy or Tripo APIs yet**. Check
 the response shapes in `api/gen3d.ts` against their current docs before relying
@@ -332,9 +346,15 @@ For the automated browser tests, `window.lab` exposes `go(id)`, `state()`,
 - the timer dial twist;
 - fingertip dents in the clay;
 - two-hand shot framing;
-- first-visit how-to cards.
+- first-visit how-to cards;
+- **one Undo across Studio** (dock button, hand menu, or saying "undo"):
+  strokes drawn, moved (alone or as a box selection), erased or binned;
+  creations made, copied or deleted; clay sculpting. Steps undo in the order
+  they happened, whichever tool made them;
+- AI generation's progress ring, request time limits and failure messages,
+  against a faked proxy.
 
-The 53 unit tests, typecheck and production build pass.
+The 55 unit tests, typecheck and production build pass.
 
 **Not yet verified on a real Quest:**
 - plane detection in a real room;
@@ -346,7 +366,10 @@ The 53 unit tests, typecheck and production build pass.
   how long an air grab is held before it starts a box (0.25 s);
 - how reliably real hand tracking tells a thumb + middle grab from a
   thumb + index pinch (thresholds in `src/core/hands.ts`);
-- frame rate;
+- frame rate (use `?perf=1`). In the emulator, Studio with every window open
+  spends about 3.5 ms per frame in the app's own update, down from about
+  6 ms after removing repeated scene-graph matrix updates. Rendering cost is
+  unknown until it runs on a headset;
 - how the positional (HRTF) audio sounds on the Quest speakers.
 
 ## Competition checklist

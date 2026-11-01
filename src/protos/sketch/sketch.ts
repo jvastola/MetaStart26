@@ -74,7 +74,24 @@ const MAX_HISTORY = 40;
 const MIN_SCALE = 0.2;
 const MAX_SCALE = 5;
 
-type HistoryEntry = { kind: 'add'; stroke: Stroke } | { kind: 'remove'; strokes: Stroke[] };
+interface StrokePose {
+  stroke: Stroke;
+  pos: Vector3;
+  quat: Quaternion;
+  scale: number;
+}
+
+type HistoryEntry = { kind: 'add'; stroke: Stroke } | { kind: 'remove'; strokes: Stroke[] } | { kind: 'move'; poses: StrokePose[] };
+
+function poseOf(stroke: Stroke): StrokePose {
+  const g = stroke.group;
+  return { stroke, pos: g.position.clone(), quat: g.quaternion.clone(), scale: g.scale.x };
+}
+
+function samePose(a: StrokePose): boolean {
+  const g = a.stroke.group;
+  return g.position.distanceTo(a.pos) < 1e-4 && Math.abs(g.scale.x - a.scale) < 1e-4 && g.quaternion.angleTo(a.quat) < 1e-3;
+}
 
 export class Stroke {
   readonly group = new Group();
@@ -134,7 +151,7 @@ export class Stroke {
 
   /** Distance (metres) from a world point to the nearest point on the stroke. */
   distanceTo(world: Vector3): number {
-    this.group.updateMatrixWorld(true);
+    this.group.updateWorldMatrix(true, false);
     const q = this.group.worldToLocal(world.clone());
     let best = Infinity;
     for (const p of this.points) best = Math.min(best, p.distanceToSquared(q));
@@ -149,7 +166,7 @@ export class Stroke {
 
   /** World centre (the group origin, once recentred) and reach in metres. */
   bounds(center: Vector3): number {
-    this.group.updateMatrixWorld(true);
+    this.group.updateWorldMatrix(true, false);
     let c = new Vector3();
     for (const p of this.points) c.add(p);
     c = c.multiplyScalar(1 / Math.max(1, this.points.length));
@@ -260,16 +277,23 @@ export class SketchPrototype implements Prototype {
       for (const item of items) this.strokeOf(item)?.setColor(hex, true);
       this.saveTimer = 0.8;
     },
-    moved: () => {
+    willMove: (items) => {
+      for (const item of items) {
+        const st = this.strokeOf(item);
+        if (st) this.moveStart.set(st, poseOf(st));
+      }
+    },
+    moved: (items) => {
       this.moves += 1;
       this.saveTimer = 0.8;
+      this.recordMove(items.map((i) => this.strokeOf(i)).filter((st): st is Stroke => st != null));
     },
     // Hand strokes over to the desk, where they stay in every app.
     pin: (items) => {
       for (const item of items) {
         const st = this.strokeOf(item);
         if (!st) continue;
-        st.group.updateMatrixWorld(true);
+        st.group.updateWorldMatrix(true, false);
         const pts = new Float32Array(st.points.length * 3);
         st.points.forEach((p, i) => pts.set([p.x, p.y, p.z], i * 3));
         this.ctx.deskObjects.addStroke(
@@ -305,6 +329,10 @@ export class SketchPrototype implements Prototype {
   selecting = false;
   private erased = 0;
   private moves = 0;
+  /** Where strokes were when a move began, for Undo. */
+  private readonly moveStart = new Map<Stroke, StrokePose>();
+  /** Told when an undo step is added ('push') or used up here ('pop'), so a host can keep one undo order. */
+  onHistory: ((event: 'push' | 'pop') => void) | null = null;
   /** Off when a host (Studio) closes the drawing tools: strokes stay, pinches do not draw. */
   drawEnabled = true;
   private wheel!: ColorWheel;
@@ -408,7 +436,7 @@ export class SketchPrototype implements Prototype {
     for (const hand of this.options.gestures === false ? [] : this.ctx.hands.both) {
       if (hand.gesture === 'right') this.wheel.cycleRecent(1);
       if (hand.gesture === 'left') this.wheel.cycleRecent(-1);
-      if (hand.gesture === 'tap') this.undo();
+      if (hand.gesture === 'tap') this.undoLast();
     }
     if (this.wheel.mesh.visible && this.toolsRoot.visible) this.wheel.update(this.ctx.pointers);
     if (this.ownSelection) this.selection.update(dt);
@@ -446,6 +474,7 @@ export class SketchPrototype implements Prototype {
       const other = [...this.held].find(([h, x]) => h !== hand && x.stroke === stroke)?.[0];
       const pose = new HeldPose();
       pose.begin(hand, stroke.group);
+      if (!other) this.moveStart.set(stroke, poseOf(stroke));
       this.held.set(hand, { stroke, pose });
       if (other) this.beginTwoHand(stroke, other, hand);
       stroke.setLit(true);
@@ -512,9 +541,11 @@ export class SketchPrototype implements Prototype {
     stroke.setLit(false);
     if (!this.strokes.includes(stroke)) return;
     if (this.ctx.trash.take(hand.holdPoint)) {
+      this.moveStart.delete(stroke);
       this.removeStrokes([stroke]);
       return;
     }
+    this.recordMove([stroke]);
     this.moves += 1;
     this.saveTimer = 0.8;
     Sfx.place(stroke.group.getWorldPosition(this.tmp));
@@ -638,8 +669,20 @@ export class SketchPrototype implements Prototype {
     this.saveTimer = 0.5;
   }
 
+  /** One undo step for strokes that ended a move away from where it began. */
+  private recordMove(strokes: Stroke[]): void {
+    const poses: StrokePose[] = [];
+    for (const st of strokes) {
+      const start = this.moveStart.get(st);
+      this.moveStart.delete(st);
+      if (start && !samePose(start)) poses.push(start);
+    }
+    if (poses.length) this.record({ kind: 'move', poses });
+  }
+
   private record(entry: HistoryEntry): void {
     this.history.push(entry);
+    this.onHistory?.('push');
     while (this.history.length > MAX_HISTORY) {
       const old = this.history.shift()!;
       // Strokes removed that long ago can no longer come back.
@@ -647,11 +690,31 @@ export class SketchPrototype implements Prototype {
     }
   }
 
-  /** Undo the last add, erase, bin drop or clear. */
-  private undo(): void {
+  undo(): boolean {
+    return this.undoLast();
+  }
+
+  canUndo(): boolean {
+    return this.history.length > 0;
+  }
+
+  /**
+   * Undo the last add, move, erase, bin drop or clear. `fromHost` is set when
+   * a host's shared Undo asks (it already knows); false when this tool's own
+   * button or gesture did it. Returns false when there was nothing to undo.
+   */
+  undoLast(fromHost = false): boolean {
     const entry = this.history.pop();
-    if (!entry) return;
-    if (entry.kind === 'add') {
+    if (!entry) return false;
+    if (!fromHost) this.onHistory?.('pop');
+    if (entry.kind === 'move') {
+      this.dropAll();
+      for (const p of entry.poses) {
+        p.stroke.group.position.copy(p.pos);
+        p.stroke.group.quaternion.copy(p.quat);
+        p.stroke.group.scale.setScalar(p.scale);
+      }
+    } else if (entry.kind === 'add') {
       if (this.isBusy(entry.stroke)) this.dropAll();
       if (this.strokes.includes(entry.stroke)) this.disposeStroke(entry.stroke);
     } else {
@@ -663,6 +726,7 @@ export class SketchPrototype implements Prototype {
     }
     this.saveTimer = 0.5;
     Sfx.blip(520);
+    return true;
   }
 
   private clear(): void {
@@ -687,7 +751,7 @@ export class SketchPrototype implements Prototype {
       this.brushRadius = next.r;
     }
     if (id === 'color') this.wheel.mesh.visible = !this.wheel.mesh.visible;
-    if (id === 'undo') this.undo();
+    if (id === 'undo') this.undoLast();
     if (id === 'clear') this.clear();
     if (id === 'erase') {
       this.erasing = !this.erasing;
@@ -803,13 +867,13 @@ export class SketchPrototype implements Prototype {
     strokePoint: (stroke: number, point: number) => {
       const s = this.strokes[stroke];
       if (!s) return null;
-      s.group.updateMatrixWorld(true);
+      s.group.updateWorldMatrix(true, false);
       const p = s.group.localToWorld(s.points[Math.min(point, s.points.length - 1)].clone());
       return { x: p.x, y: p.y, z: p.z };
     },
     wheelWorld: (x: number, y: number) => {
       const p = this.wheel.worldAt(x, y);
-      this.wheel.mesh.updateMatrixWorld(true);
+      this.wheel.mesh.updateWorldMatrix(true, false);
       const n = new Vector3(0, 0, 1).transformDirection(this.wheel.mesh.matrixWorld);
       return { x: p.x, y: p.y, z: p.z, nx: n.x, ny: n.y, nz: n.z };
     },
