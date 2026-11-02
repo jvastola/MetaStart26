@@ -26,7 +26,7 @@ export interface PalmItem {
   label: string;
 }
 
-const RADIUS = 0.062;
+const RADIUS = 0.072;
 
 export class PalmMenu {
   readonly group = new Group();

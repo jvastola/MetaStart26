@@ -320,6 +320,13 @@ export const ICONS: Record<string, Draw> = {
     line(c, [[0.24, 0.5], [0.76, 0.5]], s);
   },
   minus: (c, s) => line(c, [[0.24, 0.5], [0.76, 0.5]], s),
+  broom: (c, s) => {
+    // A broom sweeping: a slanted handle and a fan of bristles.
+    line(c, [[0.72, 0.18], [0.46, 0.56]], s);
+    line(c, [[0.36, 0.5], [0.56, 0.64], [0.44, 0.84], [0.18, 0.72]], s, true);
+    line(c, [[0.28, 0.66], [0.24, 0.76]], s);
+    line(c, [[0.38, 0.72], [0.34, 0.82]], s);
+  },
   pause: (c, s) => {
     c.fillRect(0.3 * s, 0.26 * s, 0.13 * s, 0.48 * s);
     c.fillRect(0.57 * s, 0.26 * s, 0.13 * s, 0.48 * s);

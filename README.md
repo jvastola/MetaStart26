@@ -179,7 +179,7 @@ Conjure creations.
 | Grab Clay's turntable base and move your hand up or down | Resize the sculpture (20 cm covers the whole range) |
 | Poke keys on the desk keyboard | Type; **Mic** dictates. Opens from Desk Focus **New card** and Conjure **Type** |
 | Poke the house or **?** button on the desk's front-left corner | Home, or this app's how-to card (in every app) |
-| Turn your left palm toward your face | Hand menu (a halo of round buttons): Home, How to, Undo, Sound, Passthrough / Virtual room. Undo is greyed out when the app has nothing to undo |
+| Turn your left palm toward your face | Hand menu (a halo of round buttons): Home, How to, Undo, Clear desk, Sound, Passthrough / Virtual room. Undo is greyed out when the app has nothing to undo. **Clear desk** (broom) takes everything that is not pinned off the desk: press it twice within 3 s; pinned things stay |
 | Thumb microgestures (thumb tap, swipe on the index finger) | Shortcuts: start/pause, next card, undo, bigger/smaller, rotate |
 
 **Controllers work too**, though hands are the design target:

@@ -96,6 +96,8 @@ export class LabSystem extends createSystem({
   private skeletons: HandSkeleton[] = [];
   private readonly perf = new PerfMeter();
   private readonly library = new Library();
+  /** Clear desk waits this long for its second press. */
+  private clearDeskArmed = 0;
   private coach!: CanvasPanel;
   private coachTime = 0;
   private readonly forward = new Vector3();
@@ -561,6 +563,7 @@ export class LabSystem extends createSystem({
 
   private frameUpdate(delta: number): void {
     const dt = Math.min(delta, 0.05);
+    this.clearDeskArmed = Math.max(0, this.clearDeskArmed - dt);
     this.ctx.time += dt;
     this.player.head.getWorldPosition(this.head);
     if (this.ctx.immersive) {
@@ -654,6 +657,35 @@ export class LabSystem extends createSystem({
     room.active = this.passthrough;
     b.get('help')!.disabled = !(this.active?.howTo?.length ?? 0);
     b.get('undo')!.disabled = !(this.active?.canUndo?.() ?? false);
+    const clear = b.get('cleardesk')!;
+    const loose = this.deskObjects.unpinnedCount;
+    clear.disabled = loose === 0;
+    clear.active = this.clearDeskArmed > 0;
+    clear.label =
+      this.clearDeskArmed > 0
+        ? `Press again to clear ${loose} thing${loose === 1 ? '' : 's'}`
+        : loose === 0
+          ? 'Clear the desk (nothing loose; pinned things stay)'
+          : 'Clear the desk (press twice; pinned things stay)';
+  }
+
+  /** Clear the desk: the first press asks, a second within a few seconds clears what is not pinned. */
+  private clearDesk(): void {
+    const loose = this.deskObjects.unpinnedCount;
+    if (loose === 0) {
+      this.toast('Nothing loose on the desk. Pinned things stay.');
+      return;
+    }
+    if (this.clearDeskArmed > 0) {
+      this.clearDeskArmed = 0;
+      const n = this.deskObjects.clearUnpinned();
+      Sfx.whoosh();
+      const kept = this.deskObjects.objects.length;
+      this.toast(`Cleared ${n} thing${n === 1 ? '' : 's'} off the desk.${kept ? ` ${kept} pinned ${kept === 1 ? 'stays' : 'stay'}.` : ''}`);
+    } else {
+      this.clearDeskArmed = 3;
+      this.toast(`Press Clear desk again to remove ${loose} thing${loose === 1 ? '' : 's'}. Pinned things stay.`);
+    }
   }
 
   /**
@@ -760,6 +792,7 @@ export class LabSystem extends createSystem({
       { id: 'home', icon: 'home', label: 'Home' },
       { id: 'help', icon: 'help', label: 'How to use this app' },
       { id: 'undo', icon: 'undo', label: 'Undo' },
+      { id: 'cleardesk', icon: 'broom', label: 'Clear the desk' },
       { id: 'mute', icon: 'sound', label: 'Sound' },
       { id: 'room', icon: 'eye', label: 'Passthrough' },
     ]);
@@ -772,6 +805,7 @@ export class LabSystem extends createSystem({
         this.toast(Sfx.muted ? 'Sound off.' : 'Sound on.');
       }
       if (id === 'room') this.setPassthrough(!this.passthrough);
+      if (id === 'cleardesk') this.clearDesk();
       this.refreshWristButtons();
     };
     chrome.add(this.palmMenu.group);

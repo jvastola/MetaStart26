@@ -475,6 +475,19 @@ export class DeskObjects {
     }
   }
 
+  /** How many things are on the desk and not pinned. */
+  get unpinnedCount(): number {
+    return this.objects.filter((o) => !o.pinned).length;
+  }
+
+  /** Take everything that is not pinned off the desk. Returns how many went. */
+  clearUnpinned(): number {
+    const gone = this.objects.filter((o) => !o.pinned);
+    for (const obj of gone) this.remove(obj);
+    this.save();
+    return gone.length;
+  }
+
   remove(obj: DeskObject): void {
     this.objects = this.objects.filter((o) => o !== obj);
     this.holds = this.holds.filter((h) => h.obj !== obj);
