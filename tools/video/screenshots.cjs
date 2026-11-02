@@ -52,7 +52,7 @@ fs.mkdirSync(OUT, { recursive: true });
   };
   const shot = async (name) => {
     await wait(2500);
-    await page.screenshot({ path: path.join(OUT, `${name}.jpg`), type: 'jpeg', quality: 93 });
+    await page.screenshot({ path: path.join(OUT, `${name}.jpg`), type: 'jpeg', quality: 93, timeout: 180000 });
     console.log('shot', name);
   };
   const carry = async (from, to) => {
