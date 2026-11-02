@@ -460,7 +460,9 @@ fs.mkdirSync(path.join(OUT, 'frames'), { recursive: true });
 
   caption('');
   recording = false;
-  const sfx = (await page.evaluate(() => window.__sfxLog)).map((e) => ({ name: e.name, arg: e.arg, frame: Math.round((e.t - startTime) / STEP) })).filter((e) => e.frame >= 0 && e.frame < frameNo);
+  const rawSfx = await page.evaluate(() => window.__sfxLog);
+  fs.writeFileSync(path.join(OUT, 'sfx-raw.json'), JSON.stringify({ startTime, step: STEP, frameNo, raw: rawSfx }));
+  const sfx = rawSfx.map((e) => ({ name: e.name, arg: e.arg, frame: Math.round((e.t - startTime) / STEP) })).filter((e) => e.frame >= 0 && e.frame < frameNo);
   fs.writeFileSync(path.join(OUT, 'timeline.json'), JSON.stringify({ scene: SCENE, fps: FPS, frames: frameNo, captions, sfx, errors }, null, 1));
   console.log(JSON.stringify({ scene: SCENE, frames: frameNo, seconds: +(frameNo / FPS).toFixed(1), captions: captions.length, sfx: sfx.length, errors }));
   await browser.close();
