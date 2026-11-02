@@ -81,6 +81,7 @@ fs.mkdirSync(path.join(OUT, 'frames'), { recursive: true });
   await page.evaluate(() => { window.IWER_DEVICE.primaryInputMode = 'hand'; });
   await page.getByText('Enter mixed reality').click();
   const HEAD = { x: -0.95, y: 1.17, z: 0.7 };
+  const NEAR = { x: -0.95, y: 1.12, z: 0.86 };
   await remote('set_transform', { device: 'headset', position: HEAD });
   await remote('look_at', { device: 'headset', target: { x: -0.95, y: 0.8, z: 1.28 } });
   for (let i = 0; i < 240 && (await lab('setup')) !== 'ready'; i++) await page.clock.fastForward(100);
@@ -97,13 +98,16 @@ fs.mkdirSync(path.join(OUT, 'frames'), { recursive: true });
   }
   // Hide the emulator's own tools and the page's buttons: only the app and the room show.
   await page.evaluate(() => {
-    const ui = window.IWER_DEVICE.devui;
-    if (ui) {
-      ui.devUIContainer.style.display = 'none';
-      ui.devUICanvas.style.display = 'none';
+    // Hide the emulator's tools (panels, hand gizmos, remote-control badge) and the page buttons.
+    window.IWER_DEVICE.devui?.inputLayer?.setProgrammaticMode(true);
+    const deep = (root, out = []) => { for (const el of root.querySelectorAll('*')) { out.push(el); if (el.shadowRoot) deep(el.shadowRoot, out); } return out; };
+    for (const el of deep(document)) {
+      const cs = getComputedStyle(el);
+      if (cs.position === 'fixed' && ['3', '5', '10', '11', '899'].includes(cs.zIndex)) el.style.display = 'none';
     }
-    for (const el of document.body.children) if (['10', '11', '999'].includes(getComputedStyle(el).zIndex)) el.style.display = 'none';
   });
+  // Sit a little closer once the desk is placed.
+  await remote('set_transform', { device: 'headset', position: NEAR });
   if (app !== 'hub') await lab('go', app);
   await settle(0.5);
   if (await lab('coach')) await lab('pressCoach');
@@ -174,7 +178,7 @@ fs.mkdirSync(path.join(OUT, 'frames'), { recursive: true });
       await frame();
     }
   };
-  let headNow = HEAD;
+  let headNow = NEAR;
 
   /** Drag something: reach it, grab (thumb + middle), carry, let go. */
   const carry = async (side, from, to, lift = 0.05, seconds = 0.9) => {

@@ -213,6 +213,10 @@ for (const start of [1, 5, 10, 15, 20]) {
   const end = start === 1 ? 4 : start + 4;
   for (let j = start; j < end; j += 1) BONES.push([j, j + 1]);
 }
+/** Wide bones across the palm (metacarpal bases and knuckles) so it reads as a hand, not a wireframe. */
+const PALM: [number, number][] = [
+  [5, 10], [10, 15], [15, 20], [6, 11], [11, 16], [16, 21], [5, 6], [20, 21], [0, 10], [0, 15], [1, 5],
+];
 
 /**
  * A light procedural hand: joint spheres and bones drawn from tracked joints.
@@ -230,10 +234,11 @@ export class HandSkeleton {
   private readonly dir = new V3();
   private readonly up = new V3(0, 1, 0);
 
-  constructor(color = '#dfe8ff') {
-    const mat = new MeshBasicMaterial({ color, transparent: true, opacity: 0.55, depthWrite: false });
-    this.joints = new InstancedMesh(new SphereGeometry(1, 10, 8), mat, ALL_JOINTS.length);
-    this.bones = new InstancedMesh(new CylinderGeometry(1, 1, 1, 8), mat, BONES.length);
+  constructor(color = '#e9edf4') {
+    // Solid and softly lit, so the hands read clearly on video.
+    const mat = new MeshStandardMaterial({ color, roughness: 0.55, metalness: 0, transparent: true, opacity: 0.94 });
+    this.joints = new InstancedMesh(new SphereGeometry(1, 14, 10), mat, ALL_JOINTS.length);
+    this.bones = new InstancedMesh(new CylinderGeometry(1, 1, 1, 12), mat, BONES.length + PALM.length);
     this.joints.frustumCulled = false;
     this.bones.frustumCulled = false;
     this.joints.renderOrder = 19;
@@ -246,21 +251,23 @@ export class HandSkeleton {
     this.group.visible = visible && hand.tracked && !hand.isMouse && !hand.isController;
     if (!this.group.visible) return;
     hand.joints.forEach((p, i) => {
-      const r = i === 0 ? 0.012 : (i + 1) % 5 === 0 ? 0.006 : 0.0075;
+      const r = i === 0 ? 0.014 : (i + 1) % 5 === 0 ? 0.0072 : 0.0085;
       this.m.makeScale(r, r, r).setPosition(p);
       this.joints.setMatrixAt(i, this.m);
     });
-    BONES.forEach(([a, b], i) => {
+    const bone = (a: number, b: number, r: number, i: number) => {
       const pa = hand.joints[a];
       const pb = hand.joints[b];
       this.dir.subVectors(pb, pa);
       const len = this.dir.length();
       this.mid.addVectors(pa, pb).multiplyScalar(0.5);
       this.q.setFromUnitVectors(this.up, len > 1e-6 ? this.dir.multiplyScalar(1 / len) : this.up);
-      this.s.set(0.0045, len, 0.0045);
+      this.s.set(r, len, r);
       this.m.compose(this.mid, this.q, this.s);
       this.bones.setMatrixAt(i, this.m);
-    });
+    };
+    BONES.forEach(([a, b], i) => bone(a, b, a === 0 ? 0.009 : 0.0072, i));
+    PALM.forEach(([a, b], i) => bone(a, b, 0.0105, BONES.length + i));
     this.joints.instanceMatrix.needsUpdate = true;
     this.bones.instanceMatrix.needsUpdate = true;
   }
