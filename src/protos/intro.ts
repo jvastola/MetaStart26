@@ -419,7 +419,7 @@ export class IntroPrototype implements Prototype {
     };
     const [title, body] = copy[this.step];
     this.panel.setText(`Welcome - step ${n + 1} of ${STEPS.length}`, title, body);
-    const buttons = [{ id: 'skip', label: this.step === 'home' ? 'Open Studio' : 'Skip tutorial' }, ...(this.step === 'menu' && mouse ? [{ id: 'next', label: 'Continue', tone: 'primary' as const }] : [])];
+    const buttons = [{ id: 'skip', label: this.step === 'home' ? 'Open the lab' : 'Skip tutorial' }, ...(this.step === 'menu' && mouse ? [{ id: 'next', label: 'Continue', tone: 'primary' as const }] : [])];
     this.panel.setButtons(buttons);
     this.panel.invalidate();
   }

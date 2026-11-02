@@ -85,6 +85,11 @@ export class GolfPrototype implements Prototype {
         if (this.phase === 'finished') this.startRound();
         else this.startHole(this.holeIndex);
       }
+      // Pick up and move on: scored as par + 2.
+      if (id === 'skip' && this.phase !== 'finished') {
+        this.strokes = Math.max(this.strokes, this.holes[this.holeIndex].par + 2);
+        this.holeDone();
+      }
     };
     this.deskRoot.add(this.panel.mesh);
     this.startRound();
@@ -291,12 +296,17 @@ export class GolfPrototype implements Prototype {
     const best = bestFor(this.seed);
     this.panel.setText(
       `Daily course ${this.seed}${best != null ? ` - best ${best}` : ''}`,
-      `Hole ${hole.index + 1} of ${HOLES_PER_ROUND}   Par ${hole.par}   Strokes ${this.strokes}   Total ${relativeToPar(strokesSoFar - parSoFar)}`,
+      `Hole ${hole.index + 1} of ${HOLES_PER_ROUND}: ${hole.name}   Par ${hole.par}   Strokes ${this.strokes}   Total ${relativeToPar(strokesSoFar - parSoFar)}`,
       this.message(hole),
     );
-    this.panel.setButtons([
-      { id: 'retry', label: this.phase === 'finished' ? 'Play again' : 'Retry hole' },
-    ]);
+    this.panel.setButtons(
+      this.phase === 'finished'
+        ? [{ id: 'retry', label: 'Play again' }]
+        : [
+            { id: 'retry', label: 'Retry hole' },
+            { id: 'skip', label: 'Skip (par + 2)' },
+          ],
+    );
   }
 
   private message(hole: HoleLayout): string {
@@ -326,6 +336,8 @@ export class GolfPrototype implements Prototype {
     return {
       phase: this.phase,
       hole: this.holeIndex,
+      holes: this.holes.length,
+      names: this.holes.map((h) => h.name),
       strokes: this.strokes,
       card: [...this.card],
       ball: { x: this.sim.x, z: this.sim.z, moving: this.sim.moving, sunk: this.sim.sunk },

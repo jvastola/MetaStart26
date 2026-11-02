@@ -43,7 +43,7 @@ export const ACCENTS = {
   clay: '#ff9a76',
   golf: '#8fd1ff',
   sketch: '#ff9ad5',
-  studio: '#ffe07a',
+  blocks: '#ffd36e',
   intro: '#9fc7ff',
 } as const;
 

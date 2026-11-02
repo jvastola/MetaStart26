@@ -1,6 +1,6 @@
 # Hands Lab: Meta VR Start 2026 prototypes
 
-Six hands-first mixed-reality prototypes for the
+Seven hands-first mixed-reality prototypes for the
 [Meta VR Start Developer Competition 2026](https://start-developer-competition-26.devpost.com/),
 built with Meta's Immersive Web SDK (IWSDK, WebXR). Judges open a link in the
 Quest browser: no APK or release channel.
@@ -14,11 +14,11 @@ division.
 |---|---|---|---|
 | 1 | **Desk Focus** | Productivity | A daily planner on your real desk, all within reach: grab cards off a desk planner, twist a timer, drop them in Done, grow a streak plant. A glance display on the wall shows the timer and progress. |
 | 2 | **Conjure** | Productivity / creative (Agentic) | Say or type what you want and it appears on the pedestal; the previous one steps aside to a free shelf spot and nothing else moves. Icon buttons: idea, speak, type, another version, AI on/off, clear. Instant offline sketch, optionally upgraded by Meshy or Tripo. |
-| 3 | **Shot Board** | Productivity / creative | Storyboard a scene on your desk. Frame shots with both hands like a director, anywhere in the lab; they collect on the storyboard as numbered, framed 3D cards on an arc, with play and remove-last buttons on a ledge below. |
+| 3 | **Shot Board** | Productivity / creative | Storyboard a scene on your desk. Frame shots with both hands like a director, anywhere in the lab; they collect on the storyboard as numbered, framed 3D cards on an arc, with play and remove-last buttons on a ledge below.  Three sets (Street, Campsite, Living room) with painted backdrops and the same three characters; **Light** goes day, sunset or night (lamps, windows and the fire glow, with a warm light); the panel suggests the next shot from each set's shot list. |
 | 4 | **Clay** | Productivity / creative | Sculpt with your bare fingertips on a turntable. Tools are round icon buttons in an arc on the desk (sculpt, smooth, inflate, mirror, auto spin, colour, undo, reset, print, clear prints, export); sliders for size (0.5x to 5x) and brush size, or grab the turntable base and raise or lower your hand to resize. **Print copy** builds a solid copy you can pick up; the pin in front of a print moves it onto the desk, where it stays in every app and next session. |
 | 5 | **Sketch** | Productivity / creative | Pinch to draw in the air with either hand or both; grab a stroke to move it, both hands to scale. Loop around strokes to select several and move, scale, duplicate, paint or delete them together. Icon buttons for colour, brush size, erase, select, undo, clear. |
-| 6 | **Desk Links** | Gaming (reference) | Fingertip mini golf on your desk, kept for comparing hand mechanics. Not on Home; open with `?p=golf`. |
-| 7 | **Studio** | Productivity / creative | A small desk OS. A dock of icons opens tools as windows (Draw, Conjure, Clay, Storyboard), several at once. Each window's bar moves it and has **pin**, **focus** and **hide**: unpinned windows fold their controls away until you reach toward them, and focus gives one tool the whole desk. Select across tools: strokes, creations and prints together.  **The main app**: Home's big tile, and where the tutorial and later visits open. One **Undo** (dock, hand menu, or say "undo") steps back through every tool in order: strokes drawn or moved, creations made or deleted, clay sculpting. |
+| 6 | **Desk Links** | Gaming (reference) | Fingertip mini golf on your desk: a daily 9-hole course that gets harder as you go, with eight kinds of hole (The Gate, Posts, The Funnel, S-Bend, Bank Shots, The Cove, Pinball, Switchbacks). **Skip** picks up and scores par + 2. |
+| 7 | **Blocks** | Productivity / creative | Build with voxel blocks on a 16 x 16 plate: pinch where you want a block, keep pinching to lay a row or a wall, blocks can float. Round buttons for build, erase, paint, colour, mirror, size (hold to slide), undo and clear. Grab over the plate to turn it; both hands to resize. Starts with a small cottage; autosaves. On a desktop, click a face to build against it and drag to lay a row. |
 
 ## Run it
 
@@ -34,7 +34,7 @@ npm run build
   and a grab; a right-drag or Shift-drag is a grab only (use it to move a
   Sketch stroke). Use the buttons at the bottom of the page or keys `0`-`8`
   to switch prototypes, or open `?p=focus` (also `conjure`, `shotboard`,
-  `clay`, `sketch`, `golf`, `studio`, `hub`).
+  `clay`, `sketch`, `golf`, `blocks`, `hub`).
 - **`?perf=1`** shows frame timing in the corner of your view: frames per
   second, the slowest recent frame, and how long the app's own update took.
   Use it on the Quest to check the 72 fps target. Tests read the same numbers
@@ -78,13 +78,11 @@ there. AI generation needs the `api/gen3d.ts` proxy on Vercel.
    4. **select**: hold a grab in empty air and stretch a box over three cubes;
    5. turn your left palm toward you to open the menu;
    6. press the **Home** button on the desk's front-left corner.
-4. **Studio** opens (the main app). Later visits go straight to Studio. Home
-   (the house button, or palm up then Home) shows Studio as a big **Start
-   here** tile with the single-purpose tools below it. The first time you
-   enter each prototype, a **How to** card explains it in three lines. Bring
-   it back any time with palm up, then **How to**.
+4. **Home** opens, with **Blocks** as the big **Start here** tile and the
+   other apps below it. Later visits open Home too. The first time you enter
+   each prototype, a **How to** card explains it in three lines. Bring it back
+   any time with palm up, then **How to**.
 
-Desk Links (mini golf) is no longer on Home; open it with `?p=golf`.
 Replay the tutorial from Home's **Tutorial** button. To reset first-use
 state, clear the site's storage.
 
@@ -163,7 +161,6 @@ Conjure creations.
 | Grab one object with both hands | Scale and turn it: Conjure creations and Sketch strokes |
 | Drop a held object on the bin (front-right corner of the desk) | Delete it: strokes, creations, Clay prints. Undo in Sketch brings strokes back |
 | Sketch **Erase**, then pinch across strokes | Erase them (Undo restores) |
-| Pinch or grab a Studio window's handle bar (or ray-pinch it from afar) | Move the window. Its round buttons pin, focus or hide it |
 | Grab (thumb + middle) on empty air and keep holding while you stretch a box (or use the Select tool with a pinch) | Select what the box holds; grab to move all, two hands to scale. A quick grab on empty air deselects |
 | Pinch both hands at the same moment, close together, then pull apart | Frame a camera shot, in any app (Sketch included); let go to capture it to the album. Pinches that start at different moments draw or grab as usual |
 | Pinch a dial or rim and move around it | Twist it (timer, turntable) |
@@ -293,11 +290,10 @@ src/protos/intro.ts      first-use tutorial (poke, carry, twist, palm menu)
 src/core/art.ts          desk mat, blob shadows, pinch cursor, accent colours
 src/protos/focus/        Desk Focus (focus-store.ts is the pure data model)
 src/protos/conjure/      Conjure (intent.ts parser, kit.ts offline generator, remote.ts client)
-src/protos/shotboard/    Shot Board
+src/protos/shotboard/    Shot Board (sets.ts builds the three sets and their shot lists)
 src/protos/clay/         Clay (sculpt.ts is the pure sculpting maths)
 src/protos/sketch/       Sketch (pinch-to-draw strokes, grab to move them)
-src/protos/studio.ts     Studio desk OS: dock, windows, gesture routing between tools
-src/core/window.ts       desk window: tray, handle bar, pin / focus / hide, folding
+src/protos/blocks/       Blocks (voxels.ts is the pure grid, line and ray maths)
 src/core/icon-button.ts  round icon buttons (poke, pinch, click, ray); icons.ts draws them
 src/core/rays.ts         far rays that show only on usable targets out of reach
 src/core/selection.ts    box select with live preview, group move/scale, selection menu
@@ -329,15 +325,12 @@ For the automated browser tests, `window.lab` exposes `go(id)`, `state()`,
   wrist menu;
 - the thumb + middle grab, using IWER's `pinch-middle` hand pose: moving
   Sketch strokes, two-hand scaling a stroke, the bin, Erase and Undo,
-  picking up Clay prints, Studio windows (open, move, close, saved layout,
-  gestures going to the right tool), and Studio's arrangement of
-  strokes, creations and two-hand shots;
+  picking up Clay prints;
 - icon buttons by poke and by click; far rays (shown only on far targets,
-  pinch to press, drag a window bar from afar); box select with the tool,
+  pinch to press); box select with the tool,
   with a held grab on empty air and with the mouse (right-drag); moving,
   two-hand scaling,
-  duplicating, deleting and binning a selection; windows folding when no
-  hand is near, pinning, hiding, focus and restore; photo prints from the
+  duplicating, deleting and binning a selection; photo prints from the
   camera gesture and from storyboard cards, reordering cards, pinned prints
   showing in every app and surviving a reload;
 - auto-placing the desk on the emulated room's labelled table;
@@ -347,14 +340,21 @@ For the automated browser tests, `window.lab` exposes `go(id)`, `state()`,
 - fingertip dents in the clay;
 - two-hand shot framing;
 - first-visit how-to cards;
-- **one Undo across Studio** (dock button, hand menu, or saying "undo"):
-  strokes drawn, moved (alone or as a box selection), erased or binned;
-  creations made, copied or deleted; clay sculpting. Steps undo in the order
-  they happened, whichever tool made them;
+- **Undo in the hand menu** for Blocks, Sketch, Clay and Conjure: strokes
+  drawn, moved, erased or binned; creations made, copied or deleted; clay
+  sculpting; blocks placed, erased, painted or cleared. Saying "undo" works
+  in Conjure;
+- **Blocks** with the mouse and with emulated hands: pinch to build, drag a
+  row, floating blocks, erase, paint, mirror, undo, turn and two-hand resize,
+  saved across a reload;
+- Desk Links' 9-hole round and Skip; every kind of hole over a month of
+  daily courses;
+- Shot Board's three sets in day, sunset and night light, and the shot-list
+  suggestion moving on after each shot;
 - AI generation's progress ring, request time limits and failure messages,
   against a faked proxy.
 
-The 55 unit tests, typecheck and production build pass.
+The 65 unit tests, typecheck and production build pass.
 
 **Not yet verified on a real Quest:**
 - plane detection in a real room;
@@ -366,8 +366,8 @@ The 55 unit tests, typecheck and production build pass.
   how long an air grab is held before it starts a box (0.25 s);
 - how reliably real hand tracking tells a thumb + middle grab from a
   thumb + index pinch (thresholds in `src/core/hands.ts`);
-- frame rate (use `?perf=1`). In the emulator, Studio with every window open
-  spends about 3.5 ms per frame in the app's own update, down from about
+- frame rate (use `?perf=1`). In the emulator, a busy desk (several tools
+  open) spent about 3.5 ms per frame in the app's own update, down from about
   6 ms after removing repeated scene-graph matrix updates. Rendering cost is
   unknown until it runs on a headset;
 - how the positional (HRTF) audio sounds on the Quest speakers.

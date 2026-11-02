@@ -113,7 +113,7 @@ const BUTTONS: [id: string, icon: string, label: string][] = [
   ['clear', 'trash', 'Clear the desk'],
 ];
 
-/** Lets Studio embed Conjure as a compact window. */
+/** Lets a host app embed Conjure as a compact window. */
 export interface ConjureOptions {
   /** A host's shared Undo, used for a spoken "undo". */
   undo?: () => boolean;
@@ -220,7 +220,7 @@ export class ConjurePrototype implements Prototype {
     this.restack();
   }
 
-  /** Fold the controls away (Studio, when no hand is near) or bring them back. */
+  /** Fold the controls away (a host app, when no hand is near) or bring them back. */
   setControlsVisible(on: boolean): void {
     this.panel.mesh.visible = on;
     for (const b of this.buttons.values()) b.group.visible = on;
@@ -415,7 +415,7 @@ export class ConjurePrototype implements Prototype {
         this.status = 'Removed it.';
         break;
       case 'undo':
-        // In Studio, "undo" means the last change in any tool.
+        // A host app can make "undo" mean its shared undo.
         if (!(this.options.undo ? this.options.undo() : this.undoLast())) this.status = 'Nothing to undo.';
         break;
       case 'clear':

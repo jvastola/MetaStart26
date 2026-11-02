@@ -13,7 +13,7 @@ export const BOARD_DEPTH = 0.38;
 export const BALL_RADIUS = 0.011;
 export const CUP_RADIUS = 0.021;
 export const WALL_HEIGHT = 0.022;
-export const HOLES_PER_ROUND = 3;
+export const HOLES_PER_ROUND = 9;
 
 export interface Vec2 {
   x: number;
@@ -43,6 +43,8 @@ export interface HoleLayout {
   blocks: Block[];
   posts: Post[];
   par: number;
+  /** What kind of hole it is, as a short name for the scorecard. */
+  name: string;
 }
 
 export { seededRandom };
@@ -143,13 +145,27 @@ function parFor(pathLength: number, straight: number, blocked: number): number {
   return par;
 }
 
-type Archetype = 'gate' | 'zigzag' | 'posts' | 'banks';
-const ARCHETYPES: Archetype[] = ['gate', 'zigzag', 'posts', 'banks'];
+type Archetype = 'gate' | 'zigzag' | 'posts' | 'banks' | 'snake' | 'cove' | 'funnel' | 'pinball';
+/** Gentle ones first: holes pick from this list in order, so the round gets harder. */
+export const ARCHETYPES: Archetype[] = ['gate', 'posts', 'funnel', 'zigzag', 'banks', 'cove', 'pinball', 'snake'];
+
+export const HOLE_NAMES: Record<Archetype | 'open', string> = {
+  gate: 'The Gate',
+  posts: 'Posts',
+  funnel: 'The Funnel',
+  zigzag: 'S-Bend',
+  banks: 'Bank Shots',
+  cove: 'The Cove',
+  pinball: 'Pinball',
+  snake: 'Switchbacks',
+  open: 'Open Green',
+};
 
 function buildObstacles(
   archetype: Archetype,
   rand: () => number,
   difficulty: number,
+  cup: Vec2,
 ): { blocks: Block[]; posts: Post[] } {
   const blocks: Block[] = [];
   const posts: Post[] = [];
@@ -202,6 +218,55 @@ function buildObstacles(
       }
       break;
     }
+    case 'snake': {
+      // Three walls from alternating sides: a switchback lane.
+      const len = BOARD_WIDTH * (0.6 + difficulty * 0.1);
+      const side = rand() < 0.5 ? -1 : 1;
+      [0.085, 0, -0.085].forEach((z, i) => {
+        const s = i % 2 === 0 ? side : -side;
+        blocks.push({ cx: s * (HALF_W - len / 2), cz: z, hx: len / 2, hz: thin, angle: 0 });
+      });
+      break;
+    }
+    case 'cove': {
+      // The cup sits in a walled cove: a wall in front and one at the side,
+      // open on the other side, so you have to come in around it.
+      const open = rand() < 0.5 ? -1 : 1;
+      const w = 0.065;
+      const front = cup.z + 0.05;
+      blocks.push({ cx: cup.x, cz: front, hx: w, hz: thin, angle: 0 });
+      blocks.push({ cx: cup.x - open * w, cz: cup.z, hx: thin, hz: 0.05, angle: 0 });
+      if (difficulty > 0.5) posts.push({ x: cup.x + open * (w + 0.045), z: cup.z + 0.02, r: 0.012 });
+      break;
+    }
+    case 'funnel': {
+      // Two angled walls narrowing to a gap in the middle of the board.
+      const gx = (rand() - 0.5) * (BOARD_WIDTH - 0.3);
+      const gap = 0.07 - difficulty * 0.015;
+      const len = 0.14;
+      const tilt = 0.5;
+      for (const s of [-1, 1]) {
+        const ex = gx + s * gap / 2;
+        // Each wall runs from the gap edge out and toward the tee.
+        const cx = ex + s * Math.cos(tilt) * len / 2;
+        const cz = Math.sin(tilt) * len / 2;
+        blocks.push({ cx, cz, hx: len / 2, hz: thin, angle: -s * tilt });
+      }
+      break;
+    }
+    case 'pinball': {
+      // Staggered rows of posts: lots of ways through, lots of bounces.
+      const rows = 3;
+      const cols = 5 + Math.round(difficulty);
+      for (let r = 0; r < rows; r += 1) {
+        for (let c = 0; c < cols; c += 1) {
+          if (rand() < 0.25) continue;
+          const x = ((c + (r % 2 ? 0.5 : 0) + 0.5) / (cols + 0.5) - 0.5) * (BOARD_WIDTH - 0.1);
+          posts.push({ x, z: 0.07 - r * 0.07, r: 0.01 + rand() * 0.004 });
+        }
+      }
+      break;
+    }
   }
   return { blocks, posts };
 }
@@ -213,13 +278,14 @@ function buildObstacles(
 export function generateHole(seed: number, index: number): HoleLayout {
   const rand = seededRandom(seed * 31 + index * 7919);
   const difficulty = HOLES_PER_ROUND > 1 ? index / (HOLES_PER_ROUND - 1) : 0;
-  // Rotate the archetype order per day so the three holes differ.
-  const offset = Math.floor(rand() * ARCHETYPES.length);
+  // Each day starts somewhere a little different in the list, so rounds vary.
+  const offset = Math.floor(seededRandom(seed)() * 2);
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    const archetype = ARCHETYPES[(offset + index + attempt) % ARCHETYPES.length];
+    // Retry the same kind with new positions a few times before moving on.
+    const archetype = ARCHETYPES[(offset + index + Math.floor(attempt / 8)) % ARCHETYPES.length];
     const tee = { x: (rand() - 0.5) * (BOARD_WIDTH - 0.16), z: HALF_D - 0.045 };
     const cup = { x: (rand() - 0.5) * (BOARD_WIDTH - 0.12), z: -HALF_D + 0.05 };
-    const { blocks, posts } = buildObstacles(archetype, rand, difficulty);
+    const { blocks, posts } = buildObstacles(archetype, rand, difficulty, cup);
     // Keep the tee and cup clear of obstacles.
     const clear = (v: Vec2, room: number): boolean =>
       blocks.every((b) => blockDistance(b, v.x, v.z) > room) &&
@@ -235,6 +301,7 @@ export function generateHole(seed: number, index: number): HoleLayout {
       blocks,
       posts,
       par: parFor(path, straight, blocks.length + posts.length / 3),
+      name: HOLE_NAMES[archetype],
     };
   }
   // Fallback: an open green, always playable.
@@ -245,6 +312,7 @@ export function generateHole(seed: number, index: number): HoleLayout {
     blocks: [],
     posts: [],
     par: 2,
+    name: HOLE_NAMES.open,
   };
 }
 

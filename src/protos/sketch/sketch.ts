@@ -217,13 +217,13 @@ const round6 = (v: number) => Math.round(v * 1e6) / 1e6;
 
 type Triple = [number, number, number];
 
-/** Lets another app (Studio) embed Sketch with its own layout and buttons. */
+/** Lets another app (a host app) embed Sketch with its own layout and buttons. */
 export interface SketchOptions {
   saveKey?: string;
-  /** Where the round tool buttons sit (desk-local; Studio moves them as a window). */
+  /** Where the round tool buttons sit (desk-local; a host app can move them). */
   tools?: { position: Triple; rotation: Triple };
   wheel?: { position: Triple; rotation: Triple; visible?: boolean };
-  /** A selection shared with other tools (Studio). Sketch makes its own otherwise. */
+  /** A selection shared with other tools (a host app). Sketch makes its own otherwise. */
   selection?: () => Selection;
   /** Thumb microgestures (swipe colour, tap undo). Off when the host owns them. */
   gestures?: boolean;
@@ -333,7 +333,7 @@ export class SketchPrototype implements Prototype {
   private readonly moveStart = new Map<Stroke, StrokePose>();
   /** Told when an undo step is added ('push') or used up here ('pop'), so a host can keep one undo order. */
   onHistory: ((event: 'push' | 'pop') => void) | null = null;
-  /** Off when a host (Studio) closes the drawing tools: strokes stay, pinches do not draw. */
+  /** Off when a host (a host app) closes the drawing tools: strokes stay, pinches do not draw. */
   drawEnabled = true;
   private wheel!: ColorWheel;
   private colorHex = '#7fe0b5';
@@ -610,7 +610,7 @@ export class SketchPrototype implements Prototype {
     if (!live) {
       if (this.held.has(hand) || !this.drawEnabled) return;
       if (!hand.tracked || !hand.pinchStarted) return;
-      // Pinches on any other showing panel (Conjure in Studio, say) press it instead.
+      // Pinches on any other showing panel (another app's, say) press it instead.
       if (CanvasPanel.anyContains(hand.pinchPoint, 0.05)) return;
       if (this.wheel.active || this.onWheel(hand)) return;
       const stroke = new Stroke(this.colorHex, this.brushRadius);

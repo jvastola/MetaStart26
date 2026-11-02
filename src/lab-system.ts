@@ -46,7 +46,7 @@ import { Sfx } from './core/sfx.js';
 import { findDesk, findWall, type SurfacePose, surfaceBelow } from './core/surfaces.js';
 import { ClayPrototype } from './protos/clay/clay.js';
 import { ConjurePrototype } from './protos/conjure/conjure.js';
-import { StudioPrototype } from './protos/studio.js';
+import { BlocksPrototype } from './protos/blocks/blocks.js';
 import { FocusPrototype } from './protos/focus/focus.js';
 import { GolfPrototype } from './protos/golf/golf.js';
 import { HubPrototype } from './protos/hub.js';
@@ -208,7 +208,7 @@ export class LabSystem extends createSystem({
     this.buildChrome();
     this.setupMouse();
 
-    const hub = new HubPrototype(() => this.protos.filter((p) => p.id !== 'hub' && p.id !== 'intro' && p.id !== 'golf'), (id) => this.go(id));
+    const hub = new HubPrototype(() => this.protos.filter((p) => p.id !== 'hub' && p.id !== 'intro'), (id) => this.go(id));
     this.protos = [
       hub,
       new FocusPrototype(),
@@ -217,8 +217,8 @@ export class LabSystem extends createSystem({
       new ClayPrototype(),
       new SketchPrototype(),
       new GolfPrototype(),
-      new StudioPrototype(),
-      new IntroPrototype(() => this.go('studio')),
+      new BlocksPrototype(),
+      new IntroPrototype(() => this.go('hub')),
     ];
     for (const p of this.protos) {
       p.deskRoot.visible = false;
@@ -245,8 +245,8 @@ export class LabSystem extends createSystem({
 
     this.placeDesktop();
     const requested = new URLSearchParams(location.search).get('p');
-    // First launch opens the tutorial, later ones Studio; ?p=<id> always wins.
-    const first = store.get<boolean>(INTRO_DONE_KEY, false) ? 'studio' : 'intro';
+    // First launch opens the tutorial, later ones Home; ?p=<id> always wins.
+    const first = store.get<boolean>(INTRO_DONE_KEY, false) ? 'hub' : 'intro';
     this.go(requested && this.protos.some((p) => p.id === requested) ? requested : first);
     this.buildDomNav();
     this.buildEnterButton();

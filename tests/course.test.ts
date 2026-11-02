@@ -7,6 +7,7 @@ import {
   dailySeed,
   generateHole,
   generateRound,
+  HOLE_NAMES,
   HOLES_PER_ROUND,
   shortestPathLength,
 } from '../src/protos/golf/course';
@@ -44,6 +45,15 @@ describe('course generation', () => {
       }
     }
   }, 30000);
+
+  it('uses every kind of hole over a month, and rarely falls back to an open green', () => {
+    const kinds = new Map<string, number>();
+    for (let day = 0; day < 30; day += 1) {
+      for (const hole of generateRound(dailySeed(new Date(2026, 10, 1 + day)))) kinds.set(hole.name, (kinds.get(hole.name) ?? 0) + 1);
+    }
+    for (const name of Object.values(HOLE_NAMES)) if (name !== HOLE_NAMES.open) expect(kinds.get(name) ?? 0).toBeGreaterThan(0);
+    expect(kinds.get(HOLE_NAMES.open) ?? 0).toBeLessThan(5);
+  });
 
   it('dailySeed encodes the local date', () => {
     expect(dailySeed(new Date(2026, 10, 18))).toBe(20261118);

@@ -2,7 +2,7 @@
  * The storyboard: the newest album shots as framed 3D cards on a gentle arc,
  * a title strip above, and round buttons on a ledge below (play, remove the
  * last shot). Playing lifts each shot into a large card in front, one every
- * 1.6 s, like an animatic. Shot Board hangs one on the wall; Studio has one
+ * 1.6 s, like an animatic. Shot Board hangs one on the wall; a host app can have one
  * as a window.
  *
  * Cards can be grabbed (thumb + middle): drop one on another card's place to

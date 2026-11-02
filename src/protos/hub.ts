@@ -12,6 +12,8 @@ import type { HandState } from '../core/hands.js';
 import { CanvasPanel, roundRect } from '../core/panel.js';
 import { Sfx } from '../core/sfx.js';
 
+/** The app shown as the big tile on Home. */
+const FEATURED = 'blocks';
 const TILE_W = 0.1;
 const TILE_H = 0.118;
 const POKE_DEPTH = 0.004;
@@ -124,33 +126,35 @@ const ICONS: Record<string, (c: CanvasRenderingContext2D, s: number) => void> = 
     c.bezierCurveTo(s * 0.68, s * 0.28, s * 0.78, s * 0.36, s * 0.8, s * 0.3);
     c.stroke();
   },
-  studio: (c, s) => {
-    // A drawn stroke, a conjured star and a camera frame corner.
-    c.strokeStyle = '#ffffff';
-    c.lineCap = 'round';
-    c.lineWidth = s * 0.06;
-    c.beginPath();
-    c.moveTo(s * 0.18, s * 0.7);
-    c.bezierCurveTo(s * 0.3, s * 0.4, s * 0.42, s * 0.85, s * 0.56, s * 0.6);
-    c.stroke();
-    c.fillStyle = '#ffffff';
-    c.beginPath();
-    for (let i = 0; i < 8; i += 1) {
-      const a = (i / 8) * Math.PI * 2 - Math.PI / 2;
-      const r = i % 2 === 0 ? s * 0.15 : s * 0.05;
-      c.lineTo(s * 0.68 + Math.cos(a) * r, s * 0.34 + Math.sin(a) * r);
-    }
-    c.closePath();
-    c.fill();
-    c.lineWidth = s * 0.05;
-    c.beginPath();
-    c.moveTo(s * 0.2, s * 0.36);
-    c.lineTo(s * 0.2, s * 0.2);
-    c.lineTo(s * 0.36, s * 0.2);
-    c.moveTo(s * 0.8, s * 0.64);
-    c.lineTo(s * 0.8, s * 0.8);
-    c.lineTo(s * 0.64, s * 0.8);
-    c.stroke();
+  blocks: (c, s) => {
+    // Three stacked blocks, drawn as isometric faces.
+    const cube = (x: number, y: number, k: number) => {
+      const top = [[x, y - k * 0.5], [x + k, y], [x, y + k * 0.5], [x - k, y]];
+      c.fillStyle = '#ffffff';
+      c.beginPath();
+      top.forEach(([px, py], n) => (n ? c.lineTo(px * s, py * s) : c.moveTo(px * s, py * s)));
+      c.closePath();
+      c.fill();
+      c.fillStyle = 'rgba(255,255,255,0.75)';
+      c.beginPath();
+      c.moveTo((x - k) * s, y * s);
+      c.lineTo(x * s, (y + k * 0.5) * s);
+      c.lineTo(x * s, (y + k * 1.5) * s);
+      c.lineTo((x - k) * s, (y + k) * s);
+      c.closePath();
+      c.fill();
+      c.fillStyle = 'rgba(255,255,255,0.5)';
+      c.beginPath();
+      c.moveTo((x + k) * s, y * s);
+      c.lineTo(x * s, (y + k * 0.5) * s);
+      c.lineTo(x * s, (y + k * 1.5) * s);
+      c.lineTo((x + k) * s, (y + k) * s);
+      c.closePath();
+      c.fill();
+    };
+    cube(0.36, 0.5, 0.15);
+    cube(0.64, 0.5, 0.15);
+    cube(0.5, 0.27, 0.15);
   },
   intro: (c, s) => {
     c.strokeStyle = '#ffffff';
@@ -299,10 +303,10 @@ export class HubPrototype implements Prototype {
     this.header.mesh.rotation.x = -0.18;
     this.deskRoot.add(this.header.mesh);
 
-    // Studio is the main app: one big tile on top, the single-purpose tools below.
+    // Blocks leads: one big tile on top, the other apps below.
     const apps = this.entries().map((p) => ({ id: p.id, label: p.title, sub: p.tagline, accent: p.accent }));
-    const featured = apps.filter((a) => a.id === 'studio').map((a) => ({ ...a, featured: true }));
-    const rest: TileSpec[] = [...apps.filter((a) => a.id !== 'studio'), { id: 'intro', label: 'Tutorial', sub: 'Learn the hand moves', accent: ACCENTS.intro }];
+    const featured = apps.filter((a) => a.id === FEATURED).map((a) => ({ ...a, featured: true }));
+    const rest: TileSpec[] = [...apps.filter((a) => a.id !== FEATURED), { id: 'intro', label: 'Tutorial', sub: 'Learn the hand moves', accent: ACCENTS.intro }];
     const rows: [TileSpec[], number, number][] = [
       [featured, 0.24, 1.45],
       [rest, 0.088, 0.82],

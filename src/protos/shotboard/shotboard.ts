@@ -1,35 +1,27 @@
 /**
  * Shot Board: storyboard a scene by framing shots with your hands.
  *
- * A small set sits on your desk: figures, a tree, a house, a lamp. Grab a
+ * A small set sits on your desk: a street, a campsite or a living room,
+ * with a painted backdrop and the same three characters in each. Grab a
  * piece (thumb + middle finger) to move it; turn your wrist while holding
- * it to turn it. Frame a shot anywhere in the lab by pinching with both
+ * it to turn it. Scene switches sets, Light goes day / sunset / night, and
+ * the panel suggests the next shot from the set's shot list. Frame a shot anywhere in the lab by pinching with both
  * hands and pulling them apart (the host owns that gesture); every shot
  * lands in the shared album, which this board shows on your wall. "Snap
  * view" captures straight ahead for one-handed or desktop use, and "Play"
  * runs the board as an animatic.
  */
 
-import {
-  BoxGeometry,
-  Color,
-  ConeGeometry,
-  CylinderGeometry,
-  Group,
-  Mesh,
-  MeshBasicMaterial,
-  MeshStandardMaterial,
-  SphereGeometry,
-  Vector3,
-} from '@iwsdk/core';
+import { BoxGeometry, type CanvasTexture, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, PlaneGeometry, PointLight, Vector3 } from '@iwsdk/core';
 import { ACCENTS, blobShadow } from '../../core/art.js';
 import { SHOT_H, SHOT_W } from '../../core/camera-frame.js';
-import type { LabContext, Prototype } from '../../core/context.js';
+import { type LabContext, type Prototype, store } from '../../core/context.js';
 import { HeldPose } from '../../core/grab.js';
 import { grabDistance, type HandState } from '../../core/hands.js';
 import { CanvasPanel } from '../../core/panel.js';
 import { Sfx } from '../../core/sfx.js';
 import { StoryboardWall } from '../../core/storyboard.js';
+import { buildSet, type Light, LIGHTS, paintTexture, SET_IDS, type SetId, type SetSpec } from './sets.js';
 
 const STAGE_W = 0.4;
 const STAGE_D = 0.26;
@@ -38,6 +30,10 @@ interface Prop {
   group: Group;
   name: string;
 }
+
+const SET_KEY = 'shotboard-set-v1';
+const LIGHT_KEY = 'shotboard-light-v1';
+const GLOW: Record<Light, number> = { day: 0.15, sunset: 0.7, night: 1.6 };
 
 export class ShotBoardPrototype implements Prototype {
   readonly id = 'shotboard';
@@ -60,12 +56,18 @@ export class ShotBoardPrototype implements Prototype {
   private drag: { prop: Prop; hand: HandState; pose: HeldPose } | null = null;
   private status = '';
   private readonly tmp = new Vector3();
+  private set!: SetSpec;
+  private light: Light = 'day';
+  private setRoot = new Group();
+  private backdropMat!: MeshBasicMaterial;
+  private floorMat!: MeshStandardMaterial;
+  private readonly lamp = new PointLight('#ffb35a', 0, 0.35, 1.5);
 
   init(ctx: LabContext): void {
     this.ctx = ctx;
     this.buildStage();
 
-    this.panel = new CanvasPanel({ width: 0.36, height: 0.13, columns: 4, buttonHeight: 0.034, accent: this.accent });
+    this.panel = new CanvasPanel({ width: 0.36, height: 0.17, columns: 3, buttonHeight: 0.032, accent: this.accent });
     this.panel.mesh.name = 'ShotPanel';
     // Off to the right of the stage, angled toward the user.
     this.panel.mesh.position.set(STAGE_W / 2 + 0.13, 0.085, -0.02);
@@ -78,69 +80,68 @@ export class ShotBoardPrototype implements Prototype {
   }
 
   private buildStage(): void {
-    const stage = new Mesh(new BoxGeometry(STAGE_W, 0.008, STAGE_D), new MeshStandardMaterial({ color: '#d9c7a3', roughness: 0.9 }));
+    // The stage: a shallow box whose top is the set's floor, and a painted backdrop.
+    const stage = new Mesh(new BoxGeometry(STAGE_W, 0.008, STAGE_D), new MeshStandardMaterial({ color: '#2a2e36', roughness: 0.9 }));
     stage.position.y = 0.004;
-    this.deskRoot.add(stage);
-    const backdrop = new Mesh(new BoxGeometry(STAGE_W, 0.12, 0.006), new MeshStandardMaterial({ color: '#8fb3d9', roughness: 0.9 }));
-    backdrop.position.set(0, 0.068, -STAGE_D / 2);
-    this.deskRoot.add(backdrop);
+    this.floorMat = new MeshStandardMaterial({ roughness: 0.9 });
+    const floor = new Mesh(new PlaneGeometry(STAGE_W, STAGE_D), this.floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = 0.0082;
+    // Unlit, so the painted sky reads the same whatever the room light.
+    this.backdropMat = new MeshBasicMaterial();
+    const backdrop = new Mesh(new PlaneGeometry(STAGE_W, 0.16), this.backdropMat);
+    backdrop.position.set(0, 0.088, -STAGE_D / 2 + 0.002);
+    const frame = new Mesh(new BoxGeometry(STAGE_W + 0.008, 0.168, 0.004), new MeshStandardMaterial({ color: '#2a2e36' }));
+    frame.position.set(0, 0.088, -STAGE_D / 2 - 0.001);
+    this.deskRoot.add(stage, floor, frame, backdrop, this.setRoot, this.lamp);
+    const saved = store.get<string>(SET_KEY, 'street');
+    this.light = LIGHTS.includes(store.get<Light>(LIGHT_KEY, 'day')) ? store.get<Light>(LIGHT_KEY, 'day') : 'day';
+    this.setScene(SET_IDS.includes(saved as SetId) ? (saved as SetId) : 'street');
+  }
 
-    const figure = (color: string): Group => {
-      const g = new Group();
-      const mat = new MeshStandardMaterial({ color: new Color(color), roughness: 0.6 });
-      const body = new Mesh(new CylinderGeometry(0.009, 0.014, 0.04, 14), mat);
-      body.position.y = 0.028;
-      const head = new Mesh(new SphereGeometry(0.01, 14, 10), new MeshStandardMaterial({ color: '#f1d2b6' }));
-      head.position.y = 0.058;
-      const nose = new Mesh(new BoxGeometry(0.004, 0.004, 0.006), mat);
-      nose.position.set(0, 0.058, 0.011);
-      g.add(body, head, nose);
-      return g;
-    };
-    const tree = (): Group => {
-      const g = new Group();
-      const trunk = new Mesh(new CylinderGeometry(0.004, 0.005, 0.03, 8), new MeshStandardMaterial({ color: '#7a5233' }));
-      trunk.position.y = 0.023;
-      const top = new Mesh(new ConeGeometry(0.022, 0.05, 10), new MeshStandardMaterial({ color: '#4caf50' }));
-      top.position.y = 0.06;
-      g.add(trunk, top);
-      return g;
-    };
-    const house = (): Group => {
-      const g = new Group();
-      const base = new Mesh(new BoxGeometry(0.05, 0.035, 0.04), new MeshStandardMaterial({ color: '#e9dcc3' }));
-      base.position.y = 0.0255;
-      const roof = new Mesh(new ConeGeometry(0.04, 0.03, 4), new MeshStandardMaterial({ color: '#b5533c' }));
-      roof.position.y = 0.058;
-      roof.rotation.y = Math.PI / 4;
-      g.add(base, roof);
-      return g;
-    };
-    const lamp = (): Group => {
-      const g = new Group();
-      const pole = new Mesh(new CylinderGeometry(0.002, 0.002, 0.07, 6), new MeshStandardMaterial({ color: '#2a2e36' }));
-      pole.position.y = 0.043;
-      const bulb = new Mesh(new SphereGeometry(0.008, 10, 8), new MeshBasicMaterial({ color: '#fff3b0' }));
-      bulb.position.y = 0.08;
-      g.add(pole, bulb);
-      return g;
-    };
-    const place: [string, Group, number, number, number][] = [
-      ['Hero', figure('#3f7fd9'), -0.06, 0.04, 0.4],
-      ['Friend', figure('#e86fa4'), 0.02, 0.05, -0.6],
-      ['Rival', figure('#d9483b'), 0.12, -0.03, -1.4],
-      ['Tree', tree(), -0.15, -0.07, 0],
-      ['House', house(), 0.1, -0.08, 0.3],
-      ['Lamp', lamp(), -0.1, 0.08, 0],
-    ];
-    for (const [name, group, x, z, yaw] of place) {
-      group.position.set(x, 0.008, z);
-      group.rotation.y = yaw;
-      group.name = name;
-      group.add(blobShadow(name === 'House' ? 0.09 : 0.05));
-      this.deskRoot.add(group);
-      this.props.push({ group, name });
+  /** Swap in a set: its floor, backdrop and props. */
+  private setScene(id: SetId): void {
+    this.drag = null;
+    this.selected = null;
+    for (const child of [...this.setRoot.children]) {
+      this.setRoot.remove(child);
+      child.traverse((o) => {
+        const m = o as Mesh;
+        m.geometry?.dispose();
+      });
     }
+    this.props = [];
+    this.set = buildSet(id);
+    store.set(SET_KEY, id);
+    for (const spec of this.set.props) {
+      const group = spec.group;
+      group.position.set(spec.x, 0.008, spec.z);
+      group.rotation.y = spec.yaw;
+      group.name = spec.name;
+      group.add(blobShadow(spec.shadow));
+      this.setRoot.add(group);
+      this.props.push({ group, name: spec.name });
+    }
+    (this.floorMat.map as CanvasTexture | null)?.dispose();
+    this.floorMat.map = paintTexture(512, Math.round((512 * STAGE_D) / STAGE_W), this.set.paintFloor);
+    this.floorMat.needsUpdate = true;
+    this.setLight(this.light);
+  }
+
+  /** Day, sunset or night: repaint the sky, light the lamps and fires. */
+  private setLight(light: Light): void {
+    this.light = light;
+    store.set(LIGHT_KEY, light);
+    (this.backdropMat.map as CanvasTexture | null)?.dispose();
+    this.backdropMat.map = paintTexture(640, 256, (c, w, h) => this.set.paintBackdrop(c, w, h, light));
+    this.backdropMat.needsUpdate = true;
+    for (const spec of this.set.props) for (const m of spec.glow ?? []) m.emissiveIntensity = GLOW[light];
+    const at = this.set.nightLight;
+    this.lamp.visible = at != null && light !== 'day';
+    if (at) this.lamp.position.set(...at);
+    this.lamp.intensity = light === 'night' ? 0.25 : 0.08;
+    // A dim stage at night; full light by day.
+    this.floorMat.color.set(light === 'day' ? '#ffffff' : light === 'sunset' ? '#e8c9a8' : '#6f7896');
   }
 
   enter(): void {
@@ -250,6 +251,14 @@ export class ShotBoardPrototype implements Prototype {
   // ------------------------------------------------------------ UI
 
   private onButton(id: string): void {
+    if (id === 'scene') {
+      this.setScene(SET_IDS[(SET_IDS.indexOf(this.set.id) + 1) % SET_IDS.length]);
+      this.status = `Scene: ${this.set.title}.`;
+    }
+    if (id === 'light') {
+      this.setLight(LIGHTS[(LIGHTS.indexOf(this.light) + 1) % LIGHTS.length]);
+      this.status = `Light: ${this.light}.`;
+    }
     if (id === 'snap') this.snapView();
     if (id === 'undo') this.ctx.album.removeLast();
     if (id === 'play') this.board.play();
@@ -257,12 +266,16 @@ export class ShotBoardPrototype implements Prototype {
 
   private refresh(): void {
     const count = this.ctx.album.shots.length;
+    const list = this.set.shotList;
+    const next = list[count % list.length];
     this.panel.setText(
-      `Shot Board - ${count} shot${count === 1 ? '' : 's'}`,
+      `Shot Board - ${this.set.title}, ${this.light} - ${count} shot${count === 1 ? '' : 's'}`,
       '',
-      [this.status, this.selected ? `Holding ${this.selected.name}: turn your wrist to turn it.` : 'Grab a piece (thumb + middle finger) to move it.'],
+      [`Next shot (${(count % list.length) + 1} of ${list.length}): ${next}`, this.status || (this.selected ? `Holding ${this.selected.name}: turn your wrist to turn it.` : 'Grab a piece (thumb + middle finger) to move it.')],
     );
     this.panel.setButtons([
+      { id: 'scene', label: `Scene: ${this.set.title}` },
+      { id: 'light', label: `Light: ${this.light}` },
       { id: 'snap', label: 'Snap view', tone: 'primary' },
       { id: 'play', label: this.board.playing >= 0 ? 'Playing' : 'Play', disabled: count === 0 },
       { id: 'undo', label: 'Undo shot', disabled: count === 0 },
@@ -279,6 +292,10 @@ export class ShotBoardPrototype implements Prototype {
         this.props.map((p) => [p.name, [+p.group.position.x.toFixed(3), +p.group.position.z.toFixed(3), +p.group.rotation.y.toFixed(2)]]),
       ),
       playing: this.board.playing,
+      set: this.set.id,
+      light: this.light,
+      nightLight: this.lamp.visible,
+      nextShot: this.set.shotList[this.ctx.album.shots.length % this.set.shotList.length],
     };
   }
 

@@ -94,7 +94,7 @@ interface Print {
   pinButton: IconButton;
 }
 
-/** Lets Studio embed Clay as a compact window with its own saved sculpt. */
+/** Lets a host app embed Clay as a compact window with its own saved sculpt. */
 export interface ClayOptions {
   /** Prefix for saved keys, so an embedded copy keeps its own sculpt. */
   keyPrefix?: string;
@@ -406,7 +406,7 @@ export class ClayPrototype implements Prototype {
     store.set(this.keys.scale, this.sizeSlider.value);
   }
 
-  /** Fold the controls away (Studio, when no hand is near) or bring them back. */
+  /** Fold the controls away (a host app, when no hand is near) or bring them back. */
   setControlsVisible(on: boolean): void {
     for (const b of this.buttons.values()) b.group.visible = on;
     this.sizeSlider.group.visible = on;
@@ -469,7 +469,7 @@ export class ClayPrototype implements Prototype {
 
   /**
    * 'full': buttons in a wide arc in front, sliders on the right, prints on
-   * the left. 'compact' (a Studio window): a tighter arc, sliders behind the
+   * the left. 'compact' (inside a host app): a tighter arc, sliders behind the
    * turntable, prints back right.
    */
   setLayout(mode: 'full' | 'compact'): void {

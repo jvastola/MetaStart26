@@ -320,6 +320,12 @@ export const ICONS: Record<string, Draw> = {
     line(c, [[0.24, 0.5], [0.76, 0.5]], s);
   },
   minus: (c, s) => line(c, [[0.24, 0.5], [0.76, 0.5]], s),
+  cube: (c, s) => {
+    // An isometric block.
+    line(c, [[0.5, 0.2], [0.78, 0.35], [0.5, 0.5], [0.22, 0.35]], s, true);
+    line(c, [[0.22, 0.35], [0.22, 0.66], [0.5, 0.82], [0.78, 0.66], [0.78, 0.35]], s);
+    line(c, [[0.5, 0.5], [0.5, 0.82]], s);
+  },
 };
 
 /** Draw a named icon centred in a square canvas of side `size`, white on transparent. */
