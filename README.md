@@ -1,6 +1,6 @@
 # Hands Lab: Meta VR Start 2026 prototypes
 
-Eight hands-first mixed-reality prototypes for the
+Seven hands-first mixed-reality prototypes for the
 [Meta VR Start Developer Competition 2026](https://start-developer-competition-26.devpost.com/),
 built with Meta's Immersive Web SDK (IWSDK, WebXR). Judges open a link in the
 Quest browser: no APK or release channel.
@@ -12,14 +12,13 @@ division.
 
 | # | Prototype | Track | One-line pitch |
 |---|---|---|---|
-| 1 | **Desk Focus** | Productivity | A daily planner on your real desk, all within reach: grab cards off a desk planner, twist a timer, drop them in Done, grow a streak plant. A glance display on the wall shows the timer and progress.  Round desk buttons along the front edge: New card, Start / Pause, Next card. |
+| 1 | **Desk Focus** | Productivity | A Kanban-style planner on your real desk: a board stands at the back with Inbox, Today and Done. Grab a card (thumb + middle) and drop it in any column at any height; a quick pinch on a card cycles its colour tag. Put a card on the blue FOCUS pad, twist the timer dial to start, drop it in the green tray (or on Done) when it is finished, and grow a streak plant. A glance display on the wall shows the timer and progress. Round desk buttons along the front edge: New card, Start / Pause, Next card, Clear done (press twice). |
 | 2 | **Conjure** | Productivity / creative (Agentic) | Say or type what you want and it appears on the pedestal; the previous one steps aside to a free shelf spot and nothing else moves. Icon buttons: idea, speak, type, another version, AI on/off, clear. Instant offline sketch, optionally upgraded by Meshy or Tripo. |
-| 3 | **Shot Board** | Productivity / creative | Storyboard a scene on your desk. Frame shots with both hands like a director, anywhere in the lab; they collect on the storyboard as numbered, framed 3D cards on an arc, with play and remove-last buttons on a ledge below.  Three sets (Street, Campsite, Living room) with painted backdrops and the same three characters; **Light** goes day, sunset or night (lamps, windows and the fire glow, with a warm light); the **Snap** button's label suggests the next shot from each set's shot list. Controls are round desk buttons in front of the stage: Scene, Light, Snap view, Play, Undo last shot, and Clear (press twice within 3 s to empty the storyboard).  A **library shelf** left of the stage holds your saved things and ready-made props (figures, trees, houses, cars, furniture): the shelf scrolls (pinch it and slide, flick to glide, or drag it or use the wheel with a mouse); grab a thing off the shelf and drop it on the stage; drag it off the stage to remove it. What you add is saved per set. |
+| 3 | **Shot Board** | Productivity / creative | Storyboard a scene on your desk. A plain stage with a painted backdrop: dress it from the **library shelf** on its left (your saved things and ready-made props: figures, trees, houses, cars, furniture). The shelf scrolls (pinch and slide, flick to glide, or drag it or use the wheel with a mouse); grab a thing off it and drop it on the stage; drag it off the stage to remove it. What is on the stage is saved. Frame shots with both hands like a director, anywhere in the lab; they collect on the storyboard as numbered, framed 3D cards. Round desk buttons: Light (day, sunset, night), Snap view (its label suggests the next shot from a coverage list), Play, Undo last shot, and Clear (press twice within 3 s). |
 | 4 | **Clay** | Productivity / creative | Sculpt with your bare fingertips on a turntable. Tools are round icon buttons in an arc on the desk (sculpt, smooth, inflate, mirror, auto spin, colour, undo, reset, print, clear prints, export); sliders for size (0.5x to 5x) and brush size, or grab the turntable base and raise or lower your hand to resize. **Print copy** builds a solid copy you can pick up; the pin in front of a print moves it onto the desk, where it stays in every app and next session. |
 | 5 | **Sketch** | Productivity / creative | Pinch to draw in the air with either hand or both; grab a stroke to move it, both hands to scale. Loop around strokes to select several and move, scale, duplicate, paint or delete them together. Icon buttons for colour, brush size, erase, select, undo, clear. |
 | 6 | **Desk Links** | Gaming (reference) | Fingertip mini golf on your desk: a daily 9-hole course that gets harder as you go, with eight kinds of hole (The Gate, Posts, The Funnel, S-Bend, Bank Shots, The Cove, Pinball, Switchbacks). **Skip** picks up and scores par + 2. |
 | 7 | **Blocks** | Productivity / creative | Build with voxel blocks on a 16 x 16 plate: pinch where you want a block, keep pinching to lay a row or a wall, blocks can float. Round buttons for build, erase, paint, colour, mirror, size (hold to slide), undo, print and clear. Grab over the plate to turn it; both hands to resize. Starts with a small cottage; autosaves. **Print** puts a half-size copy on the desk that you can move, resize and pin like any desk object. On a desktop, click a face to build against it and drag to lay a row. |
-| 8 | **Kanban** | Productivity | A task board standing at the back of the desk: To do, Doing and Done. Grab a card (thumb + middle) and drop it in any column, at any height; a quick pinch on a card cycles its colour tag; drop one on the bin to delete it. Round desk buttons: New card (type or say it) and Clear done (press twice). Doing's header turns amber past three cards, a soft limit on work in progress. Saves itself. |
 
 ## Run it
 
@@ -35,7 +34,7 @@ npm run build
   and a grab; a right-drag or Shift-drag is a grab only (use it to move a
   Sketch stroke). Use the buttons at the bottom of the page or keys `0`-`8`
   to switch prototypes, or open `?p=focus` (also `conjure`, `shotboard`,
-  `clay`, `sketch`, `golf`, `blocks`, `kanban`, `hub`).
+  `clay`, `sketch`, `golf`, `blocks`, `hub`).
 - **`?perf=1`** shows frame timing in the corner of your view: frames per
   second, the slowest recent frame, and how long the app's own update took.
   Use it on the Quest to check the 72 fps target. Tests read the same numbers
@@ -79,7 +78,7 @@ there. AI generation needs the `api/gen3d.ts` proxy on Vercel.
    4. **select**: hold a grab in empty air and stretch a box over three cubes;
    5. turn your left palm toward you to open the menu;
    6. press the **Home** button on the desk's front-left corner.
-4. **Home** opens: every app as a tile, all the same size (five over four). Later visits open
+4. **Home** opens: every app as a tile, all the same size (four over four). Later visits open
    Home too. The first time you enter
    each prototype, a **How to** card explains it in three lines. Bring it back
    any time with palm up, then **How to**.
@@ -300,12 +299,11 @@ src/protos/intro.ts      first-use tutorial (poke, carry, twist, palm menu)
 src/core/art.ts          desk mat, blob shadows, pinch cursor, accent colours
 src/protos/focus/        Desk Focus (focus-store.ts is the pure data model)
 src/protos/conjure/      Conjure (intent.ts parser, kit.ts offline generator, remote.ts client)
-src/protos/shotboard/    Shot Board (sets.ts: sets, shot lists, ready-made props; library-shelf.ts)
+src/protos/shotboard/    Shot Board (sets.ts: stage art, shot list, ready-made props; library-shelf.ts)
 src/core/library.ts      saved things to reuse; Shot Board's shelf shows them
 src/protos/clay/         Clay (sculpt.ts is the pure sculpting maths)
 src/protos/sketch/       Sketch (pinch-to-draw strokes, grab to move them)
 src/protos/blocks/       Blocks (voxels.ts is the pure grid, line and ray maths)
-src/protos/kanban/       Kanban (kanban-store.ts is the pure board model)
 src/core/icon-button.ts  round icon buttons (poke, pinch, click, ray); icons.ts draws them
 src/core/rays.ts         far rays that show only on usable targets out of reach
 src/core/selection.ts    box select with live preview, group move/scale, selection menu
@@ -361,19 +359,18 @@ For the automated browser tests, `window.lab` exposes `go(id)`, `state()`,
   saved across a reload;
 - Desk Links' 9-hole round and Skip; every kind of hole over a month of
   daily courses;
-- Kanban with the mouse and with hands: moving cards between and within
-  columns, colour tags, new cards from the keyboard, the bin, Clear done,
-  saved across a reload;
+- Desk Focus's board: dropping a card at a height in any column,
+  reordering, colour tags by click, Clear done (twice) keeping the streak;
 - Desk Focus's desk buttons, and Shot Board's two-press Clear;
 - the library: adding a print from the desk, pulling it and ready-made
   props onto the Shot Board stage (mouse and hands), scrolling the shelf, removing one
   by dragging it off, saved per set across a reload;
-- Shot Board's three sets in day, sunset and night light, and the shot-list
+- Shot Board's plain stage in day, sunset and night light, and the shot-list
   suggestion moving on after each shot;
 - AI generation's progress ring, request time limits and failure messages,
   against a faked proxy.
 
-The 70 unit tests, typecheck and production build pass.
+The 67 unit tests, typecheck and production build pass.
 
 **Not yet verified on a real Quest:**
 - plane detection in a real room;

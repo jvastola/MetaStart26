@@ -1,10 +1,10 @@
 /**
- * Sets for Shot Board: a painted backdrop, a floor and props for each scene,
- * plus a suggested shot list. The same three characters (Hero, Friend,
- * Rival) appear in every set, so a story can move between scenes.
+ * Shot Board's stage art and ready-made props: a plain painted backdrop and
+ * floor, a suggested shot list, and the props on the library shelf
+ * (figures, trees, houses, cars, furniture).
  *
  * Everything is small (the stage is 40 x 26 cm) and built from simple
- * shapes. Materials are shared within a set.
+ * shapes.
  */
 
 import {
@@ -23,35 +23,8 @@ import {
   TorusGeometry,
 } from '@iwsdk/core';
 
-export type SetId = 'street' | 'camp' | 'room';
-export const SET_IDS: SetId[] = ['street', 'camp', 'room'];
 export type Light = 'day' | 'sunset' | 'night';
 export const LIGHTS: Light[] = ['day', 'sunset', 'night'];
-
-export interface PropSpec {
-  name: string;
-  group: Group;
-  x: number;
-  z: number;
-  yaw: number;
-  /** Shadow size. */
-  shadow: number;
-  /** Glows at night (lamps, fires, windows). */
-  glow?: MeshStandardMaterial[];
-}
-
-export interface SetSpec {
-  id: SetId;
-  title: string;
-  props: PropSpec[];
-  /** Paints the backdrop for a time of day. */
-  paintBackdrop(c: CanvasRenderingContext2D, w: number, h: number, light: Light): void;
-  /** Paints the floor (top view, +y toward the back). */
-  paintFloor(c: CanvasRenderingContext2D, w: number, h: number): void;
-  /** Where a warm light sits at night (stage-local), if anywhere. */
-  nightLight: [number, number, number] | null;
-  shotList: string[];
-}
 
 const std = (color: string, roughness = 0.7): MeshStandardMaterial => new MeshStandardMaterial({ color: new Color(color), roughness });
 
@@ -111,7 +84,7 @@ function roundTree(): Group {
   return g;
 }
 
-function house(wall: string, roof: string): PropSpec['group'] & { userData: { glow: MeshStandardMaterial[] } } {
+function house(wall: string, roof: string): Group & { userData: { glow: MeshStandardMaterial[] } } {
   const g = new Group() as Group & { userData: { glow: MeshStandardMaterial[] } };
   const base = new Mesh(new BoxGeometry(0.06, 0.04, 0.045), std(wall));
   base.position.y = 0.02;
@@ -301,231 +274,49 @@ function sky(c: CanvasRenderingContext2D, w: number, h: number, light: Light): v
 
 const shade = (light: Light, day: string, sunset: string, night: string): string => (light === 'day' ? day : light === 'sunset' ? sunset : night);
 
-// ------------------------------------------------------------ sets
+// ------------------------------------------------------------ stage
 
-export function buildSet(id: SetId): SetSpec {
-  const hero = figure('#3f7fd9', '#3a2a20');
-  const friend = figure('#e86fa4', '#d9a441', '#4a3f6b');
-  const rival = figure('#d9483b', '#1d2027', '#2a2e36');
-  if (id === 'street') {
-    const lamp = streetLamp();
-    const home = house('#e9dcc3', '#b5533c');
-    const shop = house('#cfe0ea', '#3f6f8f');
-    return {
-      id,
-      title: 'Street',
-      props: [
-        { name: 'Hero', group: hero, x: -0.07, z: 0.06, yaw: 0.5, shadow: 0.04 },
-        { name: 'Friend', group: friend, x: 0.0, z: 0.07, yaw: -0.4, shadow: 0.04 },
-        { name: 'Rival', group: rival, x: 0.13, z: 0.0, yaw: -1.3, shadow: 0.04 },
-        { name: 'House', group: home, x: -0.1, z: -0.08, yaw: 0.15, shadow: 0.09, glow: home.userData.glow },
-        { name: 'Shop', group: shop, x: 0.08, z: -0.085, yaw: -0.1, shadow: 0.09, glow: shop.userData.glow },
-        { name: 'Car', group: car('#d9483b'), x: 0.04, z: -0.005, yaw: Math.PI / 2 + 0.1, shadow: 0.06 },
-        { name: 'Lamp', group: lamp.group, x: -0.03, z: -0.03, yaw: 0, shadow: 0.03, glow: [lamp.glow] },
-        { name: 'Tree', group: roundTree(), x: -0.16, z: 0.02, yaw: 0, shadow: 0.06 },
-        { name: 'Bench', group: bench(), x: 0.15, z: 0.08, yaw: -0.5, shadow: 0.05 },
-      ],
-      paintBackdrop: (c, w, h, light) => {
-        sky(c, w, h, light);
-        // City skyline with lit windows at night.
-        const bldg = shade(light, '#9aa7b8', '#5a4a6a', '#1a2038');
-        let x = 0;
-        let k = 0;
-        while (x < w) {
-          const bw = 40 + ((k * 37) % 50);
-          const bh = h * (0.3 + ((k * 23) % 30) / 100);
-          c.fillStyle = bldg;
-          c.fillRect(x, h - bh, bw - 4, bh);
-          if (light !== 'day') {
-            c.fillStyle = 'rgba(255,214,120,0.85)';
-            for (let wy = h - bh + 8; wy < h - 10; wy += 16) for (let wx = x + 6; wx < x + bw - 12; wx += 12) if ((wx * 7 + wy * 3) % 5 < 2) c.fillRect(wx, wy, 5, 7);
-          }
-          x += bw;
-          k++;
-        }
-      },
-      paintFloor: (c, w, h) => {
-        c.fillStyle = '#b9b4a8';
-        c.fillRect(0, 0, w, h);
-        // A road across the middle, pavement either side.
-        c.fillStyle = '#4a4f58';
-        c.fillRect(0, h * 0.38, w, h * 0.3);
-        c.fillStyle = '#f4f1d0';
-        for (let x = 10; x < w; x += 60) c.fillRect(x, h * 0.52, 30, 4);
-        c.strokeStyle = 'rgba(0,0,0,0.12)';
-        for (let x = 0; x < w; x += 32) {
-          c.beginPath();
-          c.moveTo(x, 0);
-          c.lineTo(x, h * 0.38);
-          c.moveTo(x, h * 0.68);
-          c.lineTo(x, h);
-          c.stroke();
-        }
-      },
-      nightLight: [-0.018, 0.075, -0.03],
-      shotList: [
-        'Wide: the whole street, establishing where we are',
-        'Medium: Hero and Friend meet on the pavement',
-        'Over the shoulder: Friend, looking at Hero',
-        'Close-up: Rival watching from by the car',
-        'Low angle: Rival steps out',
-        'Wide: everyone at the lamp post',
-      ],
-    };
+/** Suggested shots, in order: a classic coverage list for any scene. */
+export const SHOT_LIST = [
+  'Wide: establish the whole scene',
+  'Medium: your main character',
+  'Two-shot: two characters together',
+  'Over the shoulder: one looks at the other',
+  'Close-up: a reaction',
+  'Insert: a detail that matters',
+  'Low angle: someone powerful',
+  'Wide: how it ends',
+];
+
+/** A plain painted backdrop: sky for the time of day over soft far hills. */
+export function paintBackdrop(c: CanvasRenderingContext2D, w: number, h: number, light: Light): void {
+  sky(c, w, h, light);
+  c.fillStyle = shade(light, '#a9bfd6', '#6a4f7a', '#1d2546');
+  c.beginPath();
+  c.moveTo(0, h);
+  for (let x = 0; x <= w; x += 8) c.lineTo(x, h * 0.78 - Math.abs(Math.sin(x * 0.01 + 1) * h * 0.12 + Math.sin(x * 0.027) * h * 0.04));
+  c.lineTo(w, h);
+  c.fill();
+}
+
+/** A plain stage floor: warm grey boards with a faint grid. */
+export function paintFloor(c: CanvasRenderingContext2D, w: number, h: number): void {
+  c.fillStyle = '#c9c2b4';
+  c.fillRect(0, 0, w, h);
+  c.strokeStyle = 'rgba(0,0,0,0.08)';
+  c.lineWidth = 2;
+  for (let x = 0; x <= w; x += 32) {
+    c.beginPath();
+    c.moveTo(x, 0);
+    c.lineTo(x, h);
+    c.stroke();
   }
-  if (id === 'camp') {
-    const fire = campfire();
-    return {
-      id,
-      title: 'Campsite',
-      props: [
-        { name: 'Hero', group: hero, x: -0.05, z: 0.05, yaw: 0.9, shadow: 0.04 },
-        { name: 'Friend', group: friend, x: 0.05, z: 0.06, yaw: -0.9, shadow: 0.04 },
-        { name: 'Rival', group: rival, x: 0.15, z: -0.06, yaw: -2.2, shadow: 0.04 },
-        { name: 'Fire', group: fire.group, x: 0, z: 0.02, yaw: 0, shadow: 0.05, glow: [fire.glow] },
-        { name: 'Tent', group: tent(), x: -0.1, z: -0.06, yaw: 0.4, shadow: 0.1 },
-        { name: 'Pine', group: pine(1.2), x: -0.16, z: 0.03, yaw: 0, shadow: 0.06 },
-        { name: 'Pine 2', group: pine(0.9), x: 0.12, z: -0.09, yaw: 0, shadow: 0.05 },
-        { name: 'Rock', group: rock(0.014), x: 0.08, z: 0.0, yaw: 0, shadow: 0.04 },
-        { name: 'Boulder', group: rock(0.022), x: 0.16, z: 0.07, yaw: 0.6, shadow: 0.05 },
-      ],
-      paintBackdrop: (c, w, h, light) => {
-        sky(c, w, h, light);
-        // Two ranges of hills, then a tree line.
-        const far = shade(light, '#7fa3c9', '#6a4f7a', '#1d2546');
-        const near = shade(light, '#4f8a5a', '#3f4a4a', '#141a2a');
-        const range = (base: number, amp: number, color: string, seed: number) => {
-          c.fillStyle = color;
-          c.beginPath();
-          c.moveTo(0, h);
-          for (let x = 0; x <= w; x += 8) c.lineTo(x, h * base - Math.abs(Math.sin(x * 0.012 + seed) * amp + Math.sin(x * 0.031 + seed * 2) * amp * 0.4));
-          c.lineTo(w, h);
-          c.fill();
-        };
-        range(0.62, h * 0.22, far, 1);
-        range(0.82, h * 0.12, near, 4);
-        c.fillStyle = shade(light, '#2f6b3f', '#2a3a33', '#0c1220');
-        for (let x = 6; x < w; x += 22) {
-          const th = 24 + ((x * 13) % 18);
-          c.beginPath();
-          c.moveTo(x, h - th);
-          c.lineTo(x - 9, h);
-          c.lineTo(x + 9, h);
-          c.fill();
-        }
-      },
-      paintFloor: (c, w, h) => {
-        c.fillStyle = '#6fa257';
-        c.fillRect(0, 0, w, h);
-        c.fillStyle = 'rgba(0,0,0,0.06)';
-        for (let i = 0; i < 400; i++) c.fillRect((i * 131) % w, (i * 71) % h, 3, 3);
-        // A dirt path to the fire.
-        c.fillStyle = '#b8955f';
-        c.beginPath();
-        c.ellipse(w * 0.5, h * 0.4, w * 0.12, h * 0.12, 0, 0, Math.PI * 2);
-        c.fill();
-        c.fillRect(w * 0.46, h * 0.4, w * 0.08, h * 0.6);
-      },
-      nightLight: [0, 0.03, 0.02],
-      shotList: [
-        'Wide: the camp at dusk, tent and fire',
-        'Two-shot: Hero and Friend by the fire',
-        'Close-up: Friend telling a story',
-        'Point of view: something moves in the trees',
-        'Medium: Rival steps out from behind the pine',
-        'Close-up: Hero reacts',
-      ],
-    };
+  for (let y = 0; y <= h; y += 32) {
+    c.beginPath();
+    c.moveTo(0, y);
+    c.lineTo(w, y);
+    c.stroke();
   }
-  const lamp = floorLamp();
-  return {
-    id,
-    title: 'Living room',
-    props: [
-      { name: 'Hero', group: hero, x: -0.04, z: 0.07, yaw: 0.2, shadow: 0.04 },
-      { name: 'Friend', group: friend, x: 0.05, z: 0.02, yaw: -0.7, shadow: 0.04 },
-      { name: 'Rival', group: rival, x: 0.16, z: 0.07, yaw: -1.6, shadow: 0.04 },
-      { name: 'Sofa', group: sofa('#5a7ec2'), x: -0.06, z: -0.07, yaw: 0, shadow: 0.09 },
-      { name: 'Table', group: table(), x: -0.05, z: -0.01, yaw: 0, shadow: 0.05 },
-      { name: 'Lamp', group: lamp.group, x: -0.15, z: -0.08, yaw: 0, shadow: 0.03, glow: [lamp.glow] },
-      { name: 'Plant', group: plant(), x: 0.15, z: -0.09, yaw: 0, shadow: 0.03 },
-      { name: 'Armchair', group: armchair('#c2775a'), x: 0.09, z: -0.06, yaw: -0.5, shadow: 0.05 },
-    ],
-    paintBackdrop: (c, w, h, light) => {
-      // A wall with a window onto the sky, and a picture.
-      c.fillStyle = '#e8dcc8';
-      c.fillRect(0, 0, w, h);
-      c.fillStyle = '#c9b79c';
-      c.fillRect(0, h * 0.85, w, h * 0.15);
-      const wx = w * 0.56;
-      const wy = h * 0.12;
-      const ww = w * 0.3;
-      const wh = h * 0.5;
-      c.save();
-      c.beginPath();
-      c.rect(wx, wy, ww, wh);
-      c.clip();
-      c.translate(wx, wy);
-      sky(c, ww, wh, light);
-      c.restore();
-      c.strokeStyle = '#ffffff';
-      c.lineWidth = 8;
-      c.strokeRect(wx, wy, ww, wh);
-      c.beginPath();
-      c.moveTo(wx + ww / 2, wy);
-      c.lineTo(wx + ww / 2, wy + wh);
-      c.moveTo(wx, wy + wh / 2);
-      c.lineTo(wx + ww, wy + wh / 2);
-      c.stroke();
-      c.fillStyle = '#7a5233';
-      c.fillRect(w * 0.14, h * 0.2, w * 0.18, h * 0.28);
-      c.fillStyle = '#f2a65a';
-      c.fillRect(w * 0.15, h * 0.22, w * 0.16, h * 0.24);
-      c.fillStyle = '#4a3f7a';
-      c.beginPath();
-      c.moveTo(w * 0.15, h * 0.46);
-      c.lineTo(w * 0.23, h * 0.3);
-      c.lineTo(w * 0.31, h * 0.46);
-      c.fill();
-      if (light !== 'day') {
-        c.fillStyle = `rgba(10,14,40,${light === 'night' ? 0.45 : 0.2})`;
-        c.fillRect(0, 0, w, h);
-      }
-    },
-    paintFloor: (c, w, h) => {
-      c.fillStyle = '#a8784f';
-      c.fillRect(0, 0, w, h);
-      c.strokeStyle = 'rgba(0,0,0,0.15)';
-      c.lineWidth = 2;
-      for (let y = 0; y < h; y += 18) {
-        c.beginPath();
-        c.moveTo(0, y);
-        c.lineTo(w, y);
-        c.stroke();
-        for (let x = (y * 3) % 90; x < w; x += 90) {
-          c.beginPath();
-          c.moveTo(x, y);
-          c.lineTo(x, y + 18);
-          c.stroke();
-        }
-      }
-      // A rug.
-      c.fillStyle = '#c05a5a';
-      c.fillRect(w * 0.2, h * 0.25, w * 0.45, h * 0.45);
-      c.strokeStyle = '#f2d18a';
-      c.lineWidth = 6;
-      c.strokeRect(w * 0.23, h * 0.29, w * 0.39, h * 0.37);
-    },
-    nightLight: [-0.15, 0.07, -0.08],
-    shotList: [
-      'Wide: the room, sofa and window',
-      'Medium: Hero comes in',
-      'Two-shot: Hero and Friend at the table',
-      'Insert: the mug on the table',
-      'Over the shoulder: Rival at the door',
-      'Close-up: Friend looks out of the window',
-    ],
-  };
 }
 
 /** A one-seat armchair: a narrow sofa. */

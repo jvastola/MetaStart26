@@ -39,21 +39,28 @@ import { CanvasPanel, roundRect, THEME, wrap } from '../../core/panel.js';
 import { IconButton } from '../../core/icon-button.js';
 import { Sfx } from '../../core/sfx.js';
 import { Voice } from '../../core/voice.js';
-import { BOARD_ZONES, type Card, FocusStore, type Zone } from './focus-store.js';
+import { BOARD_ZONES, type Card, FocusStore, type Tag, type Zone } from './focus-store.js';
 
 // Everything you touch sits within arm's reach on the desk: the planner
 // stands at the back like a lectern, the pad, dial and tray at the front.
-const CARD_W = 0.072;
-const CARD_H = 0.044;
-const BOARD_W = 0.44;
-const BOARD_H = 0.25;
-const COLUMN_X: Record<string, number> = { inbox: -0.145, today: 0, done: 0.145 };
-const SLOT_TOP = 0.045;
-const SLOT_STEP = 0.05;
-const MAX_SLOTS = 3;
-/** Planner pose in desk space: centre and backward tilt. */
-const PLANNER_POS = new Vector3(0, 0.1, -0.12);
-const PLANNER_TILT = -0.75;
+const CARD_W = 0.15;
+const CARD_H = 0.038;
+const BOARD_W = 0.56;
+const BOARD_H = 0.3;
+const COLUMN_X: Record<string, number> = { inbox: -BOARD_W / 3, today: 0, done: BOARD_W / 3 };
+/** Top card's centre, and the gap between cards (closer once a column fills up). */
+const SLOT_TOP = BOARD_H / 2 - 0.05 - CARD_H / 2;
+const SLOT_STEP = CARD_H + 0.008;
+/** The board stands at the back of the desk, leaning back a little. */
+const PLANNER_POS = new Vector3(0, 0.17, -0.17);
+const PLANNER_TILT = -0.3;
+/** A pinch (or click) released this quickly is a tap: next colour. */
+const TAP = 0.35;
+const CLEAR_ARM = 3;
+const TAG_COLORS: Record<Tag, string> = { none: '', red: '#ff6b6b', amber: '#ffc94d', green: '#7fe0b5', blue: '#8fb3ff' };
+
+/** Card spacing in a column of `n` cards. */
+const stepFor = (n: number): number => Math.min(SLOT_STEP, (BOARD_H - 0.07) / Math.max(1, n));
 const GRAB_RADIUS = 0.05;
 const FLICK_SPEED = 1.1;
 
@@ -76,8 +83,8 @@ class CardView {
   placed = false;
 
   constructor(public card: Card) {
-    this.canvas.width = 360;
-    this.canvas.height = 220;
+    this.canvas.width = 512;
+    this.canvas.height = Math.round((512 * CARD_H) / CARD_W);
     this.texture = new CanvasTexture(this.canvas);
     this.texture.colorSpace = SRGBColorSpace;
     this.mesh = new Mesh(cardGeometry, new MeshBasicMaterial({ map: this.texture, side: DoubleSide, transparent: true }));
@@ -87,30 +94,32 @@ class CardView {
   }
 
   draw(): void {
-    const key = `${this.card.text}|${this.card.zone}`;
+    const key = `${this.card.text}|${this.card.zone}|${this.card.tag ?? 'none'}`;
     if (key === this.drawn) return;
     this.drawn = key;
     const ctx = this.canvas.getContext('2d')!;
     const { width: w, height: h } = this.canvas;
     const done = this.card.zone === 'done';
     ctx.clearRect(0, 0, w, h);
-    roundRect(ctx, 2, 2, w - 4, h - 4, 22);
+    roundRect(ctx, 2, 2, w - 4, h - 4, 16);
     ctx.fillStyle = done ? '#d9dde3' : '#fbfaf6';
     ctx.fill();
-    ctx.fillStyle = `hsl(${this.card.hue} 65% 55%)`;
-    ctx.fillRect(2, 18, 14, h - 36);
+    // The colour stripe: its tag if it has one, else a soft colour of its own.
+    const tag = this.card.tag ?? 'none';
+    ctx.fillStyle = tag !== 'none' ? TAG_COLORS[tag] : `hsl(${this.card.hue} 45% 70%)`;
+    ctx.fillRect(2, 2, tag !== 'none' ? 26 : 14, h - 4);
     ctx.fillStyle = done ? '#6a707a' : '#1d2027';
-    ctx.font = '600 34px system-ui, sans-serif';
-    ctx.textBaseline = 'top';
-    const lines = wrap(ctx, this.card.text, w - 60).slice(0, 4);
-    lines.forEach((line, i) => ctx.fillText(line, 34, 26 + i * 42));
+    ctx.font = '600 38px system-ui, sans-serif';
+    ctx.textBaseline = 'middle';
+    const lines = wrap(ctx, this.card.text, w - (done ? 120 : 70)).slice(0, 2);
+    lines.forEach((line, i) => ctx.fillText(line, 44, h / 2 + (i - (lines.length - 1) / 2) * 42));
     if (done) {
       ctx.strokeStyle = '#2f7d5d';
-      ctx.lineWidth = 10;
+      ctx.lineWidth = 9;
       ctx.beginPath();
-      ctx.moveTo(w - 90, h - 60);
-      ctx.lineTo(w - 66, h - 36);
-      ctx.lineTo(w - 26, h - 86);
+      ctx.moveTo(w - 70, h / 2);
+      ctx.lineTo(w - 52, h / 2 + 18);
+      ctx.lineTo(w - 22, h / 2 - 20);
       ctx.stroke();
     }
     this.texture.needsUpdate = true;
@@ -124,6 +133,9 @@ interface Hold {
   from: Zone;
   /** Hand speed while held, from the frame before release (letting go moves the fingers). */
   speed: number;
+  /** Seconds held and where it started (a short, still click is a tap). */
+  time: number;
+  start: Vector3;
 }
 
 export class FocusPrototype implements Prototype {
@@ -132,7 +144,8 @@ export class FocusPrototype implements Prototype {
   readonly tagline = 'Planner pinned to your real room';
   readonly accent = ACCENTS.focus;
   readonly howTo = [
-    'Grab a card with thumb + middle finger and carry it to the blue FOCUS pad.',
+    'Grab a card (thumb + middle) and drop it in a column at any height, or on the blue FOCUS pad.',
+    'A quick pinch (thumb + index) on a card changes its colour.',
     'Pinch the dial rim and twist to set minutes; let go to start.',
     'Done? Drop the card in the green tray, or flick it away.',
   ];
@@ -154,6 +167,8 @@ export class FocusPrototype implements Prototype {
   private plant = new Group();
   private burst!: Burst;
   private holds: Hold[] = [];
+  private taps: { view: CardView; hand: HandState; time: number }[] = [];
+  private clearArmed = 0;
   private twist: { hand: HandState; last: number; accum: number; start: number } | null = null;
   private running = false;
   private remaining = 0;
@@ -184,15 +199,22 @@ export class FocusPrototype implements Prototype {
     this.planner.position.copy(PLANNER_POS);
     this.planner.rotation.x = PLANNER_TILT;
     this.planner.add(this.board.mesh);
-    const stand = new Mesh(new BoxGeometry(BOARD_W, 0.008, 0.02), new MeshStandardMaterial({ color: '#2a2e36', roughness: 0.6 }));
-    stand.position.set(0, -BOARD_H / 2 - 0.004, -0.005);
-    this.planner.add(stand);
+    const back = new Mesh(new BoxGeometry(BOARD_W + 0.012, BOARD_H + 0.012, 0.01), new MeshStandardMaterial({ color: '#2a2e36', roughness: 0.6 }));
+    back.position.z = -0.0055;
+    this.planner.add(back);
+    for (const x of [-BOARD_W / 2 + 0.04, BOARD_W / 2 - 0.04]) {
+      const leg = new Mesh(new BoxGeometry(0.012, 0.2, 0.012), new MeshStandardMaterial({ color: '#2a2e36' }));
+      leg.position.set(x, -BOARD_H / 2 - 0.06, -0.01);
+      this.planner.add(leg);
+    }
     this.deskRoot.add(this.planner);
 
     // Wall: a read-only glance display (big timer, progress, streak).
     this.glance = new CanvasPanel({ width: 0.5, height: 0.28, columns: 1, accent: this.accent });
     this.glance.mesh.name = 'FocusGlance';
     this.glance.drawExtra = (c, area) => this.drawGlance(c, area);
+    // A little higher than the wall's centre, so the standing board in front does not hide it.
+    this.glance.mesh.position.y = 0.14;
     this.wallRoot.add(this.glance.mesh);
 
     // Desk: pad, dial, tray, plant, control panel.
@@ -205,10 +227,11 @@ export class FocusPrototype implements Prototype {
       ['add', 'plus', 'New card (type or say it)'],
       ['timer', 'play', 'Start the timer'],
       ['next', 'next', 'Next card to the pad'],
+      ['clear', 'trash', 'Clear done (press twice)'],
     ];
     row.forEach(([id, icon, label], i) => {
       const b = new IconButton({ id: `focus:${id}`, icon, label, accent: this.accent, radius: 0.016 });
-      b.group.position.set((i - 1) * 0.05, 0.001, 0.175);
+      b.group.position.set((i - (row.length - 1) / 2) * 0.05, 0.001, 0.175);
       b.onPress = () => this.onButton(id);
       this.buttons.set(id, b);
       this.deskRoot.add(b.group);
@@ -301,7 +324,9 @@ export class FocusPrototype implements Prototype {
     this.updateTimer(dt);
     this.updateGestures();
     this.updateTwist();
-    this.updateGrabs();
+    this.clearArmed = Math.max(0, this.clearArmed - dt);
+    this.updateTaps(dt);
+    this.updateGrabs(dt);
     this.layoutCards(dt);
     this.burst.update(dt);
     // A soft ambient bed plays while a focus session runs.
@@ -411,22 +436,26 @@ export class FocusPrototype implements Prototype {
     return this.holds.some((h) => h.hand === hand) || this.twist?.hand === hand;
   }
 
-  private updateGrabs(): void {
+  private updateGrabs(dt: number): void {
     // Pick up.
     for (const hand of this.ctx.pointers) {
       if (!hand.tracked || !hand.grabStarted || this.isHolding(hand)) continue;
       const view = this.nearestCard(hand);
       if (!view) continue;
       this.cards.updateWorldMatrix(true, false);
+      const start = view.mesh.getWorldPosition(new Vector3());
+      if (hand.isMouse) {
+        // Drag the card on a plane facing the camera through it, starting from it.
+        this.ctx.camera.getWorldDirection(this.tmp2).negate();
+        this.ctx.setMousePlane(start, this.tmp2);
+        hand.pinchPoint.copy(start);
+        hand.grabPoint.copy(start);
+      }
       // The card follows your hand, including its rotation.
       const pose = new HeldPose();
       pose.begin(hand, view.mesh);
-      this.holds.push({ view, hand, pose, from: view.card.zone, speed: 0 });
-      if (hand.isMouse) {
-        // Drag the card on a plane facing the camera through its position.
-        this.ctx.camera.getWorldDirection(this.tmp2).negate();
-        this.ctx.setMousePlane(view.mesh.getWorldPosition(this.tmp), this.tmp2);
-      }
+      this.holds.push({ view, hand, pose, from: view.card.zone, speed: 0, time: 0, start });
+      hand.clearEdges();
       Sfx.pinch(hand.holdPoint);
     }
     // Carry and drop.
@@ -434,10 +463,14 @@ export class FocusPrototype implements Prototype {
       const hold = this.holds[i];
       if (hold.hand.grabbing && hold.hand.tracked) {
         hold.speed = hold.hand.pinchVelocity.length();
+        hold.time += dt;
         continue;
       }
       this.holds.splice(i, 1);
-      this.drop(hold);
+      // A quick click that did not move the card (the mouse grabs and pinches at once) is a tap.
+      if (hold.hand.isMouse && hold.time < TAP && hold.view.mesh.getWorldPosition(this.tmp).distanceTo(hold.start) < 0.01) {
+        this.tagCard(hold.view);
+      } else this.drop(hold);
       if (hold.hand.isMouse) {
         this.ctx.desk.getWorldPosition(this.tmp);
         this.ctx.setMousePlane(this.tmp, this.tmp2.set(0, 1, 0));
@@ -491,17 +524,24 @@ export class FocusPrototype implements Prototype {
     // On the board: which column?
     this.planner.updateWorldMatrix(true, false);
     const w = this.planner.worldToLocal(world.clone());
-    if (Math.abs(w.z) < 0.1 && Math.abs(w.x) < BOARD_W / 2 + 0.04 && Math.abs(w.y) < BOARD_H / 2 + 0.06) {
-      const zone = BOARD_ZONES.reduce((a, z) => (Math.abs(COLUMN_X[z] - w.x) < Math.abs(COLUMN_X[a] - w.x) ? z : a));
-      if (zone === 'done') this.completeCard(id);
-      else {
-        this.store.move(id, zone);
-        Sfx.place();
-      }
-      this.syncViews();
+    if (Math.abs(w.z) < 0.12 && Math.abs(w.x) < BOARD_W / 2 + 0.04 && Math.abs(w.y) < BOARD_H / 2 + 0.06) {
+      this.dropOnBoard(id, w.x, w.y);
       return;
     }
     this.returnCard(hold);
+  }
+
+  /** Drop a card on the board at board-local x / y: its column, and the slot under it. */
+  private dropOnBoard(id: string, x: number, y: number): void {
+    const zone = BOARD_ZONES.reduce((a, z) => (Math.abs(COLUMN_X[z] - x) < Math.abs(COLUMN_X[a] - x) ? z : a));
+    const others = this.store.zone(zone).filter((c) => c.id !== id).length;
+    const index = Math.max(0, Math.min(others, Math.round((SLOT_TOP - y) / stepFor(others + 1))));
+    if (zone === 'done' && this.store.find(id)?.zone !== 'done') this.completeCard(id);
+    else {
+      this.store.move(id, zone, undefined, index);
+      Sfx.place();
+    }
+    this.syncViews();
   }
 
   /**
@@ -523,6 +563,7 @@ export class FocusPrototype implements Prototype {
       ...BOARD_ZONES.map((z) => [z, this.planner.localToWorld(new Vector3(COLUMN_X[z], 0, 0.01)), true] as [Zone, Vector3, boolean]),
     ];
     let best: Zone | null = null;
+    let onBoard = false;
     let bestDist = Infinity;
     for (const [zone, p, tall] of targets) {
       const d = tall ? Math.max(0, rayDist(p) - BOARD_H / 2) : rayDist(p);
@@ -530,16 +571,55 @@ export class FocusPrototype implements Prototype {
       if (d < limit && d < bestDist) {
         bestDist = d;
         best = zone;
+        onBoard = tall;
       }
     }
     if (best == null) return false;
-    if (best === 'done') this.completeCard(hold.view.card.id);
-    else {
-      this.store.move(hold.view.card.id, best);
+    if (best === 'focus') {
+      this.store.move(hold.view.card.id, 'focus');
       Sfx.place();
       this.syncViews();
+    } else if (!onBoard) this.completeCard(hold.view.card.id);
+    else {
+      // A board column: where the cursor ray meets the board sets the slot.
+      const o = this.planner.worldToLocal(this.tmp.copy(rayOrigin));
+      const e = this.planner.worldToLocal(this.tmp2.copy(rayOrigin).add(rayDir));
+      const t = Math.abs(e.z - o.z) > 1e-6 ? -o.z / (e.z - o.z) : 0;
+      this.dropOnBoard(hold.view.card.id, COLUMN_X[best], o.y + (e.y - o.y) * t);
     }
     return true;
+  }
+
+  /** Quick pinches on cards cycle their colour tag. */
+  private updateTaps(dt: number): void {
+    for (const t of this.taps) t.time += dt;
+    for (const hand of this.ctx.pointers) {
+      if (!hand.tracked || hand.isMouse || !hand.pinchStarted || this.isHolding(hand)) continue;
+      let best: CardView | null = null;
+      let bestD = 0.035;
+      for (const view of this.views.values()) {
+        const d = view.mesh.getWorldPosition(this.tmp).distanceTo(hand.pinchPoint);
+        if (d < bestD) {
+          bestD = d;
+          best = view;
+        }
+      }
+      if (!best) continue;
+      this.taps.push({ view: best, hand, time: 0 });
+      hand.clearEdges();
+    }
+    for (let i = this.taps.length - 1; i >= 0; i--) {
+      const t = this.taps[i];
+      if (t.hand.pinching && t.hand.tracked) continue;
+      this.taps.splice(i, 1);
+      if (t.time < TAP) this.tagCard(t.view);
+    }
+  }
+
+  private tagCard(view: CardView): void {
+    const tag = this.store.cycleTag(view.card.id);
+    view.draw();
+    Sfx.blip(tag === 'none' ? 520 : 760, view.mesh.getWorldPosition(this.tmp));
   }
 
   private returnCard(hold: Hold): void {
@@ -589,6 +669,7 @@ export class FocusPrototype implements Prototype {
     this.planner.updateWorldMatrix(true, false);
     this.cards.getWorldQuaternion(this.parentQuatInv).invert();
     const counts: Record<string, number> = { inbox: 0, today: 0, done: 0 };
+    const sizes: Record<string, number> = { inbox: this.store.zone('inbox').length, today: this.store.zone('today').length, done: this.store.zone('done').length };
     const k = 1 - Math.exp(-dt * 12);
 
     for (const card of this.store.cards) {
@@ -604,13 +685,10 @@ export class FocusPrototype implements Prototype {
         view.targetQuat.copy(this.tilt);
       } else {
         const slot = counts[card.zone]++;
-        const visible = Math.min(slot, MAX_SLOTS - 1);
-        const over = Math.max(0, slot - (MAX_SLOTS - 1));
-        this.tmp.set(COLUMN_X[card.zone], SLOT_TOP - visible * SLOT_STEP - over * 0.004, 0.006 + over * 0.0015);
+        this.tmp.set(COLUMN_X[card.zone], SLOT_TOP - slot * stepFor(sizes[card.zone]), 0.006 + slot * 0.0005);
         this.planner.localToWorld(this.tmp);
         this.planner.getWorldQuaternion(this.tmpQ);
         this.toCardsSpace(this.tmp, this.tmpQ, view);
-        view.mesh.visible = slot < MAX_SLOTS + 3;
       }
       if (!view.placed) {
         view.mesh.position.copy(view.targetPos);
@@ -655,6 +733,19 @@ export class FocusPrototype implements Prototype {
     if (id === 'next') {
       this.store.cycleFocus(1);
       this.syncViews();
+    }
+    if (id === 'clear') {
+      const n = this.store.zone('done').length;
+      if (this.clearArmed > 0) {
+        this.clearArmed = 0;
+        this.store.clearDone();
+        this.syncViews();
+        Sfx.whoosh();
+        this.ctx.toast(`Cleared ${n} done card${n === 1 ? '' : 's'}. They still count toward your streak.`);
+      } else if (n > 0) {
+        this.clearArmed = CLEAR_ARM;
+        this.ctx.toast(`Press Clear done again to take ${n} card${n === 1 ? '' : 's'} off the board.`);
+      }
     }
   }
 
@@ -760,6 +851,11 @@ export class FocusPrototype implements Prototype {
     timer.disabled = !focus;
     timer.active = this.running;
     timer.label = focus ? `${this.running ? 'Pause' : this.remaining > 0 ? 'Resume' : 'Start'}: ${body}` : body;
+    const done = this.store.zone('done').length;
+    const clear = this.buttons.get('clear')!;
+    clear.disabled = done === 0;
+    clear.active = this.clearArmed > 0;
+    clear.label = this.clearArmed > 0 ? `Press again to clear ${done} done` : 'Clear done (press twice)';
     this.updatePlant();
   }
 
@@ -853,6 +949,7 @@ export class FocusPrototype implements Prototype {
       minutes: this.store.data.focusMinutes,
       streak: this.store.currentStreak(),
       holding: this.holds.length,
+      tags: Object.fromEntries(this.store.cards.map((c) => [c.text, c.tag ?? 'none'])),
     };
   }
 
@@ -873,6 +970,12 @@ export class FocusPrototype implements Prototype {
       return { x: p.x, y: p.y, z: p.z };
     },
     press: (id: string) => this.buttons.get(id)?.press(true),
+    /** World point of a card slot on the board. */
+    slotWorld: (zone: string, index: number) => {
+      this.planner.updateWorldMatrix(true, false);
+      const p = this.planner.localToWorld(new Vector3(COLUMN_X[zone] ?? 0, SLOT_TOP - index * SLOT_STEP, 0.01));
+      return { x: p.x, y: p.y, z: p.z };
+    },
     reset: () => {
       this.store.data = FocusStore.fresh();
       this.store.save();

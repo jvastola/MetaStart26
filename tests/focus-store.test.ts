@@ -49,4 +49,26 @@ describe('FocusStore', () => {
     s.setFocusMinutes(-3);
     expect(s.data.focusMinutes).toBe(5);
   });
+
+  it('drops a card at a position in its column', () => {
+    const s = new FocusStore(false);
+    const inbox = s.zone('inbox').map((c) => c.id);
+    s.move(inbox[0], 'today', undefined, 1);
+    expect(s.zone('today')[1].id).toBe(inbox[0]);
+    s.move(inbox[1], 'today', undefined, 99);
+    expect(s.zone('today').at(-1)?.id).toBe(inbox[1]);
+    s.move(inbox[2], 'inbox', undefined, 0);
+    expect(s.zone('inbox')[0].id).toBe(inbox[2]);
+  });
+
+  it('cycles colour tags and clears Done without losing the count', () => {
+    const s = new FocusStore(false);
+    const id = s.zone('inbox')[0].id;
+    expect([s.cycleTag(id), s.cycleTag(id), s.cycleTag(id), s.cycleTag(id), s.cycleTag(id)]).toEqual(['red', 'amber', 'green', 'blue', 'none']);
+    s.complete(id);
+    const total = s.data.totalDone;
+    expect(s.clearDone()).toBe(1);
+    expect(s.zone('done')).toHaveLength(0);
+    expect(s.data.totalDone).toBe(total);
+  });
 });

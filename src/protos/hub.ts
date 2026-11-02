@@ -152,25 +152,6 @@ const ICONS: Record<string, (c: CanvasRenderingContext2D, s: number) => void> = 
     cube(0.64, 0.5, 0.15);
     cube(0.5, 0.27, 0.15);
   },
-  kanban: (c, s) => {
-    // Three columns with cards, one card mid-move.
-    c.fillStyle = 'rgba(255,255,255,0.35)';
-    for (let i = 0; i < 3; i++) {
-      roundRect(c, s * (0.16 + i * 0.24), s * 0.2, s * 0.2, s * 0.62, s * 0.03);
-      c.fill();
-    }
-    c.fillStyle = '#ffffff';
-    const card = (x: number, y: number) => {
-      roundRect(c, s * x, s * y, s * 0.16, s * 0.09, s * 0.02);
-      c.fill();
-    };
-    card(0.18, 0.26);
-    card(0.18, 0.38);
-    card(0.18, 0.5);
-    card(0.42, 0.26);
-    card(0.66, 0.26);
-    card(0.5, 0.56);
-  },
   intro: (c, s) => {
     c.strokeStyle = '#ffffff';
     c.lineWidth = s * 0.06;
@@ -307,12 +288,12 @@ export class HubPrototype implements Prototype {
     this.header.mesh.rotation.x = -0.18;
     this.deskRoot.add(this.header.mesh);
 
-    // Every app the same size: two rows in a gentle arc, five on top.
+    // Every app the same size: two rows in a gentle arc, four on top.
     const specs: TileSpec[] = [
       ...this.entries().map((p) => ({ id: p.id, label: p.title, sub: p.tagline, accent: p.accent })),
       { id: 'intro', label: 'Tutorial', sub: 'Learn the hand moves', accent: ACCENTS.intro },
     ];
-    const rows = [specs.slice(0, 5), specs.slice(5)];
+    const rows = [specs.slice(0, 4), specs.slice(4)];
     rows.forEach((row, r) => {
       row.forEach((spec, i) => {
         const tile = new AppTile(spec);

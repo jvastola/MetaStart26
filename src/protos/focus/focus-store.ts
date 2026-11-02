@@ -8,11 +8,16 @@ import { dayNumber, store } from '../../core/context.js';
 export type Zone = 'inbox' | 'today' | 'focus' | 'done';
 export const BOARD_ZONES: Zone[] = ['inbox', 'today', 'done'];
 
+/** Colour tags a quick pinch cycles through (none first). */
+export const TAGS = ['none', 'red', 'amber', 'green', 'blue'] as const;
+export type Tag = (typeof TAGS)[number];
+
 export interface Card {
   id: string;
   text: string;
   zone: Zone;
   hue: number;
+  tag?: Tag;
   /** Day number the card was completed, for done cards. */
   doneDay?: number;
 }
@@ -97,8 +102,11 @@ export class FocusStore {
     return card;
   }
 
-  /** Move a card. Only one card can be in focus: the previous one returns to Today. */
-  move(id: string, zone: Zone, now = new Date()): void {
+  /**
+   * Move a card. Only one card can be in focus: the previous one returns to
+   * Today. `index` places it in its column (0 = top; default top).
+   */
+  move(id: string, zone: Zone, now = new Date(), index = 0): void {
     const card = this.find(id);
     if (!card) return;
     if (zone === 'done') {
@@ -111,9 +119,35 @@ export class FocusStore {
     }
     card.zone = zone;
     delete card.doneDay;
-    // Move to the front of its new column.
-    this.data.cards = [card, ...this.data.cards.filter((c) => c !== card)];
+    this.place(card, index);
     this.save();
+  }
+
+  /** Put a card at a position within its column, keeping everything else in order. */
+  private place(card: Card, index: number): void {
+    const rest = this.data.cards.filter((c) => c !== card);
+    const column = rest.filter((c) => c.zone === card.zone);
+    const at = Math.max(0, Math.min(column.length, index));
+    const pos = at < column.length ? rest.indexOf(column[at]) : column.length ? rest.indexOf(column[column.length - 1]) + 1 : 0;
+    rest.splice(pos, 0, card);
+    this.data.cards = rest;
+  }
+
+  /** Next colour tag for a card. */
+  cycleTag(id: string): Tag {
+    const card = this.find(id);
+    if (!card) return 'none';
+    card.tag = TAGS[(TAGS.indexOf(card.tag ?? 'none') + 1) % TAGS.length];
+    this.save();
+    return card.tag;
+  }
+
+  /** Take the Done cards off the board (they still count). Returns how many. */
+  clearDone(): number {
+    const before = this.data.cards.length;
+    this.data.cards = this.data.cards.filter((c) => c.zone !== 'done');
+    this.save();
+    return before - this.data.cards.length;
   }
 
   /** Complete a card and update the streak. Returns the new streak. */
