@@ -14,7 +14,7 @@ division.
 |---|---|---|---|
 | 1 | **Desk Focus** | Productivity | A daily planner on your real desk, all within reach: grab cards off a desk planner, twist a timer, drop them in Done, grow a streak plant. A glance display on the wall shows the timer and progress. |
 | 2 | **Conjure** | Productivity / creative (Agentic) | Say or type what you want and it appears on the pedestal; the previous one steps aside to a free shelf spot and nothing else moves. Icon buttons: idea, speak, type, another version, AI on/off, clear. Instant offline sketch, optionally upgraded by Meshy or Tripo. |
-| 3 | **Shot Board** | Productivity / creative | Storyboard a scene on your desk. Frame shots with both hands like a director, anywhere in the lab; they collect on the storyboard as numbered, framed 3D cards on an arc, with play and remove-last buttons on a ledge below.  Three sets (Street, Campsite, Living room) with painted backdrops and the same three characters; **Light** goes day, sunset or night (lamps, windows and the fire glow, with a warm light); the panel suggests the next shot from each set's shot list. |
+| 3 | **Shot Board** | Productivity / creative | Storyboard a scene on your desk. Frame shots with both hands like a director, anywhere in the lab; they collect on the storyboard as numbered, framed 3D cards on an arc, with play and remove-last buttons on a ledge below.  Three sets (Street, Campsite, Living room) with painted backdrops and the same three characters; **Light** goes day, sunset or night (lamps, windows and the fire glow, with a warm light); the panel suggests the next shot from each set's shot list.  A **library shelf** left of the stage holds your saved things and ready-made props (figures, trees, houses, cars, furniture): grab one off the shelf and drop it on the stage; drag it off the stage to remove it. What you add is saved per set. |
 | 4 | **Clay** | Productivity / creative | Sculpt with your bare fingertips on a turntable. Tools are round icon buttons in an arc on the desk (sculpt, smooth, inflate, mirror, auto spin, colour, undo, reset, print, clear prints, export); sliders for size (0.5x to 5x) and brush size, or grab the turntable base and raise or lower your hand to resize. **Print copy** builds a solid copy you can pick up; the pin in front of a print moves it onto the desk, where it stays in every app and next session. |
 | 5 | **Sketch** | Productivity / creative | Pinch to draw in the air with either hand or both; grab a stroke to move it, both hands to scale. Loop around strokes to select several and move, scale, duplicate, paint or delete them together. Icon buttons for colour, brush size, erase, select, undo, clear. |
 | 6 | **Desk Links** | Gaming (reference) | Fingertip mini golf on your desk: a daily 9-hole course that gets harder as you go, with eight kinds of hole (The Gate, Posts, The Funnel, S-Bend, Bank Shots, The Cove, Pinball, Switchbacks). **Skip** picks up and scores par + 2. |
@@ -141,7 +141,7 @@ tap a grab on empty air to deselect.
 strokes, Conjure creations), Blocks prints and photo prints live on the desk itself, not in
 an app: they show everywhere, Home included, and are saved for next session.
 Nothing shows buttons until you want it to: **tap** a thing (a quick pinch on
-it, or a click) and small pin, size and delete buttons appear above it; tap again,
+it, or a click) and small pin, size, library and delete buttons appear above it; tap again,
 or anywhere else, and it goes. That works for desk objects, Clay prints and
 Conjure creations.
 - **Photo prints:** every shot you frame with both hands pops out a small
@@ -155,6 +155,9 @@ Conjure creations.
 - **Resize:** grab a desk object with both hands and pull apart, or use its
   **size** button: press for the next size, or hold and slide (pinned things
   too).
+- **Add to library:** a tapped desk object, Clay print or Conjure creation
+  also shows an **add to library** button (books icon). The library keeps a
+  copy; Shot Board's shelf shows it so you can pull it into a scene.
 - **Blocks prints:** Blocks' **Print** button drops a half-size copy of the
   build beside the plate, unpinned, ready to pick up.
 - **Storyboard cards:** grab one and drop it on another card's place to
@@ -296,7 +299,8 @@ src/protos/intro.ts      first-use tutorial (poke, carry, twist, palm menu)
 src/core/art.ts          desk mat, blob shadows, pinch cursor, accent colours
 src/protos/focus/        Desk Focus (focus-store.ts is the pure data model)
 src/protos/conjure/      Conjure (intent.ts parser, kit.ts offline generator, remote.ts client)
-src/protos/shotboard/    Shot Board (sets.ts builds the three sets and their shot lists)
+src/protos/shotboard/    Shot Board (sets.ts: sets, shot lists, ready-made props; library-shelf.ts)
+src/core/library.ts      saved things to reuse; Shot Board's shelf shows them
 src/protos/clay/         Clay (sculpt.ts is the pure sculpting maths)
 src/protos/sketch/       Sketch (pinch-to-draw strokes, grab to move them)
 src/protos/blocks/       Blocks (voxels.ts is the pure grid, line and ray maths)
@@ -355,6 +359,9 @@ For the automated browser tests, `window.lab` exposes `go(id)`, `state()`,
   saved across a reload;
 - Desk Links' 9-hole round and Skip; every kind of hole over a month of
   daily courses;
+- the library: adding a print from the desk, pulling it and ready-made
+  props onto the Shot Board stage (mouse and hands), paging, removing one
+  by dragging it off, saved per set across a reload;
 - Shot Board's three sets in day, sunset and night light, and the shot-list
   suggestion moving on after each shot;
 - AI generation's progress ring, request time limits and failure messages,

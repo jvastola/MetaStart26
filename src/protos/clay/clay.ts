@@ -19,6 +19,7 @@
  * scale the sculpture; the size slider follows.
  */
 
+import { printData } from '../../core/desk-objects.js';
 import {
   BufferAttribute,
   BufferGeometry,
@@ -382,6 +383,14 @@ export class ClayPrototype implements Prototype {
         }
       },
     );
+    this.printActions.addLibrary(`clay-print-${this.keys.sculpt}`, this.accent, () => {
+      const p = this.tappedPrint;
+      if (!p) return;
+      this.ctx.library.add(
+        printData(Float32Array.from(p.mesh.geometry.attributes.position.array as Float32Array), `#${p.material.color.getHexString()}`, [p.mesh.scale.x, p.mesh.rotation.y, p.mesh.position.y], p.height),
+      );
+      this.ctx.toast('Added to the library. Pull it out from the shelf in Shot Board.');
+    });
     this.deskRoot.add(this.printActions.group);
     this.setLayout(this.layoutMode);
     // Prints build up behind a clipping plane.

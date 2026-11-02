@@ -51,6 +51,14 @@ import { Sfx } from './sfx.js';
 import type { TrashBin } from './trash.js';
 
 const SAVE_KEY = 'desk-objects-v1';
+
+/** Saved data for one thing: what the desk and the library store. */
+export type SavedObject = Saved;
+
+/** Library data for a clay print, built the way the desk saves one. */
+export function printData(positions: Float32Array, color: string, m: [number, number, number], height: number): Saved {
+  return { k: 'print', v: toBase64(positions), c: color, m, h: height, t: [0, 0, 0, 0, 0, 0, 1, 1], pinned: false };
+}
 /** Old per-app keys for pinned prints, read once and moved here. */
 const OLD_PIN_KEYS = ['clay-pinned-v1', 'studio-clay-pinned-v1'];
 const LIMITS: Record<Kind, number> = { photo: 16, print: 8, stroke: 40, model: 12, voxels: 8 };
@@ -162,6 +170,8 @@ export class DeskObjects {
   private readonly tmp = new Vector3();
   /** Lets mouse drags slide on a plane through the object (set by the host). */
   mousePlane: ((point: Vector3) => void) | null = null;
+  /** Set by the host: save a thing to the library. */
+  onLibrary: ((data: Saved) => void) | null = null;
   mouseRelease: (() => void) | null = null;
 
   constructor(
@@ -197,6 +207,9 @@ export class DeskObjects {
         this.setScale(this.selected, steps.find((x) => x > now + 0.05) ?? steps[0]);
       },
     );
+    this.actions.addLibrary('desk', '#ffc94d', () => {
+      if (this.selected) this.onLibrary?.(this.dataOf(this.selected));
+    });
     this.group.add(this.actions.group);
   }
 
@@ -628,34 +641,46 @@ export class DeskObjects {
     }
     for (const s of saved) {
       try {
-        let obj: DeskObject | null = null;
-        if (s.k === 'print' && s.v && s.m && s.c) obj = this.buildPrint(fromBase64(s.v), s.c, s.m, s.h ?? 0.1);
-        else if (s.k === 'stroke' && s.p && s.c) obj = this.buildStroke(fromBase64(s.p), s.c, s.r ?? 0.005);
-        else if (s.k === 'model' && s.pr) obj = this.buildModel(s.pr, s.va ?? 0, s.c ?? null);
-        else if (s.k === 'voxels' && s.vx && s.vs) obj = this.buildVoxels(s.vx, s.vs);
-        else if (s.k === 'photo' && s.img) {
-          const photo = this.buildPhoto(document.createElement('canvas'), s.w ?? 0.12, s.img);
-          const image = new Image();
-          image.onload = () => {
-            // A fresh texture: an uploaded one cannot change size in place.
-            const material = (photo.holder.children[1] as Mesh).material as MeshBasicMaterial;
-            const old = material.map;
-            const tex = new Texture(image);
-            tex.colorSpace = NoColorSpace;
-            tex.needsUpdate = true;
-            material.map = tex;
-            material.needsUpdate = true;
-            old?.dispose();
-          };
-          image.src = s.img;
-          obj = photo;
-        }
+        const obj = this.buildSaved(s);
         if (obj) this.restore(obj, s);
       } catch {
         // A damaged entry: skip it.
       }
     }
     this.save();
+  }
+
+  /** Rebuild a thing from saved data (desk objects and library items). */
+  buildSaved(s: Saved): DeskObject | null {
+    let obj: DeskObject | null = null;
+    if (s.k === 'print' && s.v && s.m && s.c) obj = this.buildPrint(fromBase64(s.v), s.c, s.m, s.h ?? 0.1);
+    else if (s.k === 'stroke' && s.p && s.c) obj = this.buildStroke(fromBase64(s.p), s.c, s.r ?? 0.005);
+    else if (s.k === 'model' && s.pr) obj = this.buildModel(s.pr, s.va ?? 0, s.c ?? null);
+    else if (s.k === 'voxels' && s.vx && s.vs) obj = this.buildVoxels(s.vx, s.vs);
+    else if (s.k === 'photo' && s.img) {
+      const photo = this.buildPhoto(document.createElement('canvas'), s.w ?? 0.12, s.img);
+      const image = new Image();
+      image.onload = () => {
+        // A fresh texture: an uploaded one cannot change size in place.
+        const material = (photo.holder.children[1] as Mesh).material as MeshBasicMaterial;
+        const old = material.map;
+        const tex = new Texture(image);
+        tex.colorSpace = NoColorSpace;
+        tex.needsUpdate = true;
+        material.map = tex;
+        material.needsUpdate = true;
+        old?.dispose();
+      };
+      image.src = s.img;
+      obj = photo;
+    }
+    return obj;
+  }
+
+  /** What would be saved for this object (for the library). */
+  dataOf(obj: DeskObject): Saved {
+    const h = obj.holder;
+    return { ...obj.data, k: obj.kind, pinned: obj.pinned, t: [...h.position.toArray(), ...h.quaternion.toArray(), h.scale.x] } as Saved;
   }
 
   private restore(obj: DeskObject, s: Saved): void {

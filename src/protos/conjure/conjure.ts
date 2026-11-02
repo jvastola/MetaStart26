@@ -342,6 +342,12 @@ export class ConjurePrototype implements Prototype {
         }
       },
     );
+    this.itemActions.addLibrary(`conjure-${this.options.layout ?? 'full'}`, this.accent, () => {
+      const it = this.tapped;
+      if (!it) return;
+      this.ctx.library.add({ k: 'model', pr: it.prompt, va: it.variation, c: it.color ?? undefined, t: [0, 0, 0, 0, 0, 0, 1, 1], pinned: false });
+      this.ctx.toast('Added to the library. Pull it out from the shelf in Shot Board.');
+    });
     this.deskRoot.add(this.itemActions.group);
 
     this.provider = availableProviders()[0] ?? 'sketch';

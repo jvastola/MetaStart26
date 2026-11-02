@@ -30,6 +30,8 @@ export class ItemActions {
   readonly remove: IconButton;
   /** Optional middle button: press to step the size, hold and slide to set it. */
   size: IconButton | null = null;
+  /** Optional: save the thing to the library. */
+  library: IconButton | null = null;
   target: Object3D | null = null;
   /** World point the buttons float above (top of the thing). */
   private top: () => Vector3 = () => new Vector3();
@@ -55,11 +57,26 @@ export class ItemActions {
     const b = new IconButton({ id: `${id}:size`, icon: 'size', label: 'Size (hold and slide)', accent, radius: 0.012 });
     b.hold = hold;
     b.onPress = onPress;
-    this.pin.group.position.x = -0.032;
-    this.remove.group.position.x = 0.032;
     this.group.add(b.group);
     this.size = b;
+    this.layout();
     return b;
+  }
+
+  /** Add an "add to library" button. */
+  addLibrary(id: string, accent: string, onPress: () => void): IconButton {
+    const b = new IconButton({ id: `${id}:library`, icon: 'library', label: 'Add to library', accent, radius: 0.012 });
+    b.onPress = onPress;
+    this.group.add(b.group);
+    this.library = b;
+    this.layout();
+    return b;
+  }
+
+  /** Space the buttons evenly: pin, size, library, delete. */
+  private layout(): void {
+    const row = [this.pin, this.size, this.library, this.remove].filter((b): b is IconButton => b != null);
+    row.forEach((b, i) => (b.group.position.x = (i - (row.length - 1) / 2) * 0.032));
   }
 
   show(target: Object3D, top: () => Vector3): void {

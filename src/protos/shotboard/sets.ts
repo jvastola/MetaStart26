@@ -546,3 +546,27 @@ export function paintTexture(width: number, height: number, paint: (c: CanvasRen
 }
 
 export const unlit = (texture: CanvasTexture): MeshBasicMaterial => new MeshBasicMaterial({ map: texture });
+
+/** Ready-made props for the library shelf. */
+export const PRESETS: { name: string; make: () => Group }[] = [
+  { name: 'Hero', make: () => figure('#3f7fd9', '#3a2a20') },
+  { name: 'Friend', make: () => figure('#e86fa4', '#d9a441', '#4a3f6b') },
+  { name: 'Rival', make: () => figure('#d9483b', '#1d2027', '#2a2e36') },
+  { name: 'Extra', make: () => figure('#5aa95a', '#7a5233') },
+  { name: 'Pine', make: () => pine() },
+  { name: 'Round tree', make: () => roundTree() },
+  { name: 'House', make: () => house('#e9dcc3', '#b5533c') },
+  { name: 'Shop', make: () => house('#cfe0ea', '#3f6f8f') },
+  { name: 'Street lamp', make: () => streetLamp().group },
+  { name: 'Red car', make: () => car('#d9483b') },
+  { name: 'Blue car', make: () => car('#3f7fd9') },
+  { name: 'Bench', make: () => bench() },
+  { name: 'Tent', make: () => tent() },
+  { name: 'Campfire', make: () => campfire().group },
+  { name: 'Rock', make: () => rock(0.016) },
+  { name: 'Sofa', make: () => sofa('#5a7ec2') },
+  { name: 'Armchair', make: () => armchair('#c2775a') },
+  { name: 'Table', make: () => table() },
+  { name: 'Floor lamp', make: () => floorLamp().group },
+  { name: 'Plant', make: () => plant() },
+];

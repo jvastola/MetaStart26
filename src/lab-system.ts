@@ -12,6 +12,7 @@
  */
 
 import { PerfMeter } from './core/perf.js';
+import { Library } from './core/library.js';
 import {
   createSystem,
   CylinderGeometry,
@@ -94,6 +95,7 @@ export class LabSystem extends createSystem({
   private readonly eye = new Vector3();
   private skeletons: HandSkeleton[] = [];
   private readonly perf = new PerfMeter();
+  private readonly library = new Library();
   private coach!: CanvasPanel;
   private coachTime = 0;
   private readonly forward = new Vector3();
@@ -166,6 +168,10 @@ export class LabSystem extends createSystem({
     this.desk.add(this.deskObjects.group);
     this.deskObjects.group.visible = false;
     this.deskObjects.load();
+    this.deskObjects.onLibrary = (data) => {
+      this.library.add(data);
+      this.toast('Added to the library. Pull it out from the shelf in Shot Board.');
+    };
     this.deskObjects.mousePlane = (at) => this.ctx.setMousePlane(at, this.camera.getWorldDirection(new Vector3()).negate());
     this.deskObjects.mouseRelease = () => this.ctx.setMousePlane(this.desk.getWorldPosition(new Vector3()), new Vector3(0, 1, 0));
     this.desk.add(this.homeButton.group, this.helpButton.group);
@@ -195,6 +201,7 @@ export class LabSystem extends createSystem({
       album: this.album,
       trash: this.trashBin,
       deskObjects: this.deskObjects,
+      library: this.library,
       capture: (eye: Vector3, target: Vector3, fov: number) => this.shoot(eye, target, fov),
       openKeyboard: (request) => this.keyboard.open(request),
     };
@@ -1080,6 +1087,7 @@ export class LabSystem extends createSystem({
       }).map((b) => b.id),
       /** Desk objects (pinned prints, photo prints) and helpers. */
       deskObjects: () => this.deskObjects.debug(),
+      library: () => this.library.items.map((i) => ({ id: i.id, name: i.name, kind: i.data.k })),
       deskObjectWorld: (i: number) => {
         const o = this.deskObjects.objects[i];
         if (!o) return null;

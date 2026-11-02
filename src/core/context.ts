@@ -14,6 +14,7 @@ import type { HandState, Hands } from './hands.js';
 import type { KeyboardRequest } from './keyboard.js';
 import type { TrashBin } from './trash.js';
 import type { DeskObjects } from './desk-objects.js';
+import type { Library } from './library.js';
 
 export interface LabContext {
   readonly world: World;
@@ -47,6 +48,8 @@ export interface LabContext {
   openKeyboard(request: KeyboardRequest): void;
   /** Pinned prints and photo prints that live on the desk in every app. */
   readonly deskObjects: DeskObjects;
+  /** Saved things to reuse (Shot Board's shelf shows them). */
+  readonly library: Library;
   /** The desk's trash bin (shown for prototypes with `trash: true`). */
   readonly trash: TrashBin;
   /** Render a shot from `eye` toward `target` into the album; returns its caption. */
