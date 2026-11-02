@@ -308,11 +308,11 @@ export class HubPrototype implements Prototype {
 
   enter(): void {
     this.header.setText(
-      'Hands Lab',
+      'Deskcraft',
       '',
       this.ctx.immersive
         ? 'Poke an app with your fingertip, or pinch it. Palm up any time for Home.'
-        : 'Click an app, or press 0-7. Enter mixed reality to use your hands.',
+        : 'Click an app, or press its number key. Enter mixed reality to use your hands.',
     );
     // Ignore the poke that opened Home so it cannot also press a tile.
     this.cooldown = 0.3;

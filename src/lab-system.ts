@@ -242,6 +242,8 @@ export class LabSystem extends createSystem({
         if (immersive === this.ctx.immersive) return;
         this.ctx.immersive = immersive;
         this.ctx.pointers = immersive ? this.hands.both : [this.mouse];
+        // Home's hint differs for hands and mouse.
+        if (this.active?.id === 'hub') this.active.enter();
         if (this.enterButton) this.enterButton.style.display = immersive ? 'none' : 'block';
         if (immersive) {
           Sfx.unlock();
@@ -731,7 +733,7 @@ export class LabSystem extends createSystem({
     }
     // A halo of round buttons above the palm, facing you.
     if (this.wristOpen) {
-      this.palmMenu.setTitle(this.active?.title ?? 'Lab', this.active?.accent ?? '#9fc7ff');
+      this.palmMenu.setTitle(this.active?.title ?? 'Deskcraft', this.active?.accent ?? '#9fc7ff');
       this.refreshWristButtons();
     }
     const preview = !this.ctx.immersive ? this.palmPreview : null;
@@ -1051,7 +1053,7 @@ export class LabSystem extends createSystem({
         const eye = this.camera.getWorldPosition(new Vector3());
         const dir = this.camera.getWorldDirection(new Vector3());
         const palm = eye.clone().addScaledVector(dir, 0.35).add(new Vector3(0, -0.1, 0));
-        this.palmMenu.setTitle(this.active?.title ?? 'Lab', this.active?.accent ?? '#9fc7ff');
+        this.palmMenu.setTitle(this.active?.title ?? 'Deskcraft', this.active?.accent ?? '#9fc7ff');
         this.refreshWristButtons();
         this.palmPreview = { palm, normal: dir.clone().negate() };
       },

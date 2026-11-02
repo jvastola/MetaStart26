@@ -1,4 +1,4 @@
-# Hands Lab: Meta VR Start 2026 prototypes
+# Deskcraft: hands-first mixed reality for your real desk
 
 Seven hands-first mixed-reality prototypes for the
 [Meta VR Start Developer Competition 2026](https://start-developer-competition-26.devpost.com/),
