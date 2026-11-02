@@ -46,4 +46,5 @@ pids/
 
 # Video tool outputs
 tools/video/out/
+tools/video/pro/
 __pycache__/
