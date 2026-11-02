@@ -36,6 +36,7 @@ import type { LabContext, Prototype } from '../../core/context.js';
 import { ACCENTS, blobShadow } from '../../core/art.js';
 import type { HandState } from '../../core/hands.js';
 import { CanvasPanel, roundRect, THEME, wrap } from '../../core/panel.js';
+import { IconButton } from '../../core/icon-button.js';
 import { Sfx } from '../../core/sfx.js';
 import { Voice } from '../../core/voice.js';
 import { BOARD_ZONES, type Card, FocusStore, type Zone } from './focus-store.js';
@@ -143,7 +144,7 @@ export class FocusPrototype implements Prototype {
   private views = new Map<string, CardView>();
   private cards = new Group();
   private board!: CanvasPanel;
-  private panel!: CanvasPanel;
+  private readonly buttons = new Map<string, IconButton>();
   private glance!: CanvasPanel;
   private glanceKey = '';
   private readonly planner = new Group();
@@ -199,13 +200,19 @@ export class FocusPrototype implements Prototype {
     this.deskRoot.add(this.cards);
     this.burst = new Burst(this.deskRoot);
 
-    this.panel = new CanvasPanel({ width: 0.36, height: 0.13, columns: 4, buttonHeight: 0.034 });
-    this.panel.mesh.name = 'FocusPanel';
-    // Beside the planner, angled toward the user.
-    this.panel.mesh.position.set(0.37, 0.1, -0.02);
-    this.panel.mesh.rotation.set(-0.25, -0.5, 0, 'YXZ');
-    this.panel.onPress = (id) => this.onButton(id);
-    this.deskRoot.add(this.panel.mesh);
+    // Round desk buttons in a row along the front edge: New card, Start / Pause, Next card.
+    const row: [string, string, string][] = [
+      ['add', 'plus', 'New card (type or say it)'],
+      ['timer', 'play', 'Start the timer'],
+      ['next', 'next', 'Next card to the pad'],
+    ];
+    row.forEach(([id, icon, label], i) => {
+      const b = new IconButton({ id: `focus:${id}`, icon, label, accent: this.accent, radius: 0.016 });
+      b.group.position.set((i - 1) * 0.05, 0.001, 0.175);
+      b.onPress = () => this.onButton(id);
+      this.buttons.set(id, b);
+      this.deskRoot.add(b.group);
+    });
 
     for (const card of this.store.cards) this.viewFor(card);
   }
@@ -288,7 +295,6 @@ export class FocusPrototype implements Prototype {
 
   update(dt: number): void {
     const { pointers } = this.ctx;
-    this.panel.update(pointers, dt);
     this.board.update([], dt);
     this.glance.update([], dt);
 
@@ -409,7 +415,6 @@ export class FocusPrototype implements Prototype {
     // Pick up.
     for (const hand of this.ctx.pointers) {
       if (!hand.tracked || !hand.grabStarted || this.isHolding(hand)) continue;
-      if (this.panel.contains(hand.holdPoint)) continue;
       const view = this.nearestCard(hand);
       if (!view) continue;
       this.cards.updateWorldMatrix(true, false);
@@ -746,12 +751,15 @@ export class FocusPrototype implements Prototype {
     if (this.listening) body = `Listening: ${this.listening}`;
     else if (focus && (this.running || this.remaining > 0)) body = `${focus.text} - ${formatTime(this.remaining)}${this.running ? '' : ' (paused)'}`;
     else if (focus) body = `On the pad: ${focus.text}. Pinch the dial and twist to start.`;
-    this.panel.setText(this.title, '', body);
-    this.panel.setButtons([
-      { id: 'add', label: 'New card', sub: 'type or say it' },
-      { id: 'timer', label: this.running ? 'Pause' : this.remaining > 0 ? 'Resume' : 'Start', tone: 'primary', disabled: !focus },
-      { id: 'next', label: 'Next card' },
-    ]);
+    // The buttons say what they will do; the timer's label carries the status line.
+    const add = this.buttons.get('add')!;
+    add.active = this.listening !== '';
+    add.label = this.listening ? `Listening: ${this.listening}` : 'New card (type or say it)';
+    const timer = this.buttons.get('timer')!;
+    timer.icon = this.running ? 'pause' : 'play';
+    timer.disabled = !focus;
+    timer.active = this.running;
+    timer.label = focus ? `${this.running ? 'Pause' : this.remaining > 0 ? 'Resume' : 'Start'}: ${body}` : body;
     this.updatePlant();
   }
 
@@ -864,7 +872,7 @@ export class FocusPrototype implements Prototype {
       const p = this.planner.localToWorld(new Vector3(COLUMN_X[zone] ?? 0, SLOT_TOP, 0.01));
       return { x: p.x, y: p.y, z: p.z };
     },
-    press: (id: string) => this.panel.press(id),
+    press: (id: string) => this.buttons.get(id)?.press(true),
     reset: () => {
       this.store.data = FocusStore.fresh();
       this.store.save();

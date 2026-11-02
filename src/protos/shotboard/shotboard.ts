@@ -58,7 +58,10 @@ const BUTTONS: [id: string, icon: string, label: string][] = [
   ['snap', 'snap', 'Snap view'],
   ['play', 'play', 'Play the storyboard'],
   ['undo', 'undo', 'Undo last shot'],
+  ['clear', 'trash', 'Clear the storyboard'],
 ];
+/** Seconds the Clear button waits for its second press. */
+const CLEAR_ARM = 3;
 const LIGHT_ICONS: Record<Light, string> = { day: 'sun', sunset: 'sunset', night: 'moon' };
 const LIGHT_KEY = 'shotboard-light-v1';
 const GLOW: Record<Light, number> = { day: 0.15, sunset: 0.7, night: 1.6 };
@@ -91,6 +94,8 @@ export class ShotBoardPrototype implements Prototype {
   private floorMat!: MeshStandardMaterial;
   private readonly lamp = new PointLight('#ffb35a', 0, 0.35, 1.5);
   private shelf!: LibraryShelf;
+  /** Clear needs a second press within a few seconds. */
+  private clearArmed = 0;
   private libraryVersion = -1;
 
   init(ctx: LabContext): void {
@@ -100,7 +105,7 @@ export class ShotBoardPrototype implements Prototype {
     // Round desk buttons in a shallow arc in front of the stage.
     BUTTONS.forEach(([id, icon, label], k) => {
       const b = new IconButton({ id: `shot:${id}`, icon, label, accent: this.accent, radius: 0.016 });
-      b.group.position.set((k - (BUTTONS.length - 1) / 2) * 0.05, 0.001, STAGE_D / 2 + 0.035 + Math.abs(k - (BUTTONS.length - 1) / 2) * -0.008);
+      b.group.position.set((k - (BUTTONS.length - 1) / 2) * 0.048, 0.001, STAGE_D / 2 + 0.035 + Math.abs(k - (BUTTONS.length - 1) / 2) * -0.006);
       b.onPress = () => this.onButton(id);
       this.buttons.set(id, b);
       this.deskRoot.add(b.group);
@@ -210,6 +215,7 @@ export class ShotBoardPrototype implements Prototype {
   }
 
   update(dt: number): void {
+    this.clearArmed = Math.max(0, this.clearArmed - dt);
     if (this.ctx.library.version !== this.libraryVersion) this.refreshShelf();
     this.board.update(dt);
     this.updateGestures();
@@ -383,6 +389,19 @@ export class ShotBoardPrototype implements Prototype {
       this.setLight(LIGHTS[(LIGHTS.indexOf(this.light) + 1) % LIGHTS.length]);
       this.ctx.toast(`Light: ${this.light}.`);
     }
+    if (id === 'clear') {
+      const count = this.ctx.album.shots.length;
+      if (this.clearArmed > 0) {
+        this.clearArmed = 0;
+        this.board.stop?.();
+        this.ctx.album.clear();
+        Sfx.whoosh();
+        this.ctx.toast(`Cleared ${count} shot${count === 1 ? '' : 's'}. The storyboard is empty.`);
+      } else if (count > 0) {
+        this.clearArmed = CLEAR_ARM;
+        this.ctx.toast(`Press Clear again to remove all ${count} shot${count === 1 ? '' : 's'}.`);
+      }
+    }
     if (id === 'snap') this.snapView();
     if (id === 'undo') this.ctx.album.removeLast();
     if (id === 'play') this.board.play();
@@ -402,6 +421,10 @@ export class ShotBoardPrototype implements Prototype {
     play.disabled = count === 0;
     play.active = this.board.playing >= 0;
     this.buttons.get('undo')!.disabled = count === 0;
+    const clear = this.buttons.get('clear')!;
+    clear.disabled = count === 0;
+    clear.active = this.clearArmed > 0;
+    clear.label = this.clearArmed > 0 ? `Press again to clear all ${count} shots` : 'Clear the storyboard (press twice)';
   }
 
   // ------------------------------------------------------------ tests

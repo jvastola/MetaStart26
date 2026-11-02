@@ -71,6 +71,12 @@ export class Album {
     this.changed();
   }
 
+  /** Remove every shot. */
+  clear(): void {
+    for (const shot of this.shots.splice(0)) shot.dispose();
+    this.changed();
+  }
+
   onChange(fn: () => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);

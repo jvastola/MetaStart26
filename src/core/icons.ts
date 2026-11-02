@@ -320,6 +320,20 @@ export const ICONS: Record<string, Draw> = {
     line(c, [[0.24, 0.5], [0.76, 0.5]], s);
   },
   minus: (c, s) => line(c, [[0.24, 0.5], [0.76, 0.5]], s),
+  pause: (c, s) => {
+    c.fillRect(0.3 * s, 0.26 * s, 0.13 * s, 0.48 * s);
+    c.fillRect(0.57 * s, 0.26 * s, 0.13 * s, 0.48 * s);
+  },
+  next: (c, s) => {
+    // Skip to the next one: a play triangle against a bar.
+    c.beginPath();
+    c.moveTo(0.28 * s, 0.26 * s);
+    c.lineTo(0.62 * s, 0.5 * s);
+    c.lineTo(0.28 * s, 0.74 * s);
+    c.closePath();
+    c.fill();
+    c.fillRect(0.64 * s, 0.26 * s, 0.09 * s, 0.48 * s);
+  },
   scene: (c, s) => {
     // A framed landscape: hills under a sun.
     line(c, [[0.18, 0.26], [0.82, 0.26], [0.82, 0.74], [0.18, 0.74]], s, true);
