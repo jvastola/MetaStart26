@@ -320,6 +320,32 @@ export const ICONS: Record<string, Draw> = {
     line(c, [[0.24, 0.5], [0.76, 0.5]], s);
   },
   minus: (c, s) => line(c, [[0.24, 0.5], [0.76, 0.5]], s),
+  scene: (c, s) => {
+    // A framed landscape: hills under a sun.
+    line(c, [[0.18, 0.26], [0.82, 0.26], [0.82, 0.74], [0.18, 0.74]], s, true);
+    line(c, [[0.18, 0.66], [0.38, 0.46], [0.52, 0.6], [0.64, 0.5], [0.82, 0.66]], s);
+    circle(c, 0.66, 0.38, 0.05, s, true);
+  },
+  sun: (c, s) => {
+    circle(c, 0.5, 0.5, 0.14, s, true);
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      line(c, [[0.5 + Math.cos(a) * 0.24, 0.5 + Math.sin(a) * 0.24], [0.5 + Math.cos(a) * 0.33, 0.5 + Math.sin(a) * 0.33]], s);
+    }
+  },
+  sunset: (c, s) => {
+    line(c, [[0.16, 0.66], [0.84, 0.66]], s);
+    c.beginPath();
+    c.arc(0.5 * s, 0.66 * s, 0.18 * s, Math.PI, 0);
+    c.fill();
+    for (const a of [-2.6, -2.0, -1.57, -1.14, -0.54]) line(c, [[0.5 + Math.cos(a) * 0.26, 0.66 + Math.sin(a) * 0.26], [0.5 + Math.cos(a) * 0.34, 0.66 + Math.sin(a) * 0.34]], s);
+  },
+  moon: (c, s) => {
+    c.beginPath();
+    c.arc(0.5 * s, 0.5 * s, 0.26 * s, 0, Math.PI * 2);
+    c.arc(0.62 * s, 0.42 * s, 0.22 * s, 0, Math.PI * 2, true);
+    c.fill('evenodd');
+  },
   library: (c, s) => {
     // Three books on a shelf, one leaning.
     line(c, [[0.18, 0.78], [0.82, 0.78]], s);

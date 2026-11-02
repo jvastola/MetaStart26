@@ -5,7 +5,9 @@
  * with a painted backdrop and the same three characters in each. Grab a
  * piece (thumb + middle finger) to move it; turn your wrist while holding
  * it to turn it. Scene switches sets, Light goes day / sunset / night, and
- * the panel suggests the next shot from the set's shot list. Frame a shot anywhere in the lab by pinching with both
+ * the Snap button's label suggests the next shot from the set's shot list.
+ * Round desk buttons in front of the stage: Scene, Light, Snap view, Play
+ * and Undo last shot. Frame a shot anywhere in the lab by pinching with both
  * hands and pulling them apart (the host owns that gesture); every shot
  * lands in the shared album, which this board shows on your wall. "Snap
  * view" captures straight ahead for one-handed or desktop use, and "Play"
@@ -18,7 +20,7 @@ import { SHOT_H, SHOT_W } from '../../core/camera-frame.js';
 import { type LabContext, type Prototype, store } from '../../core/context.js';
 import { HeldPose } from '../../core/grab.js';
 import { grabDistance, type HandState } from '../../core/hands.js';
-import { CanvasPanel } from '../../core/panel.js';
+import { IconButton } from '../../core/icon-button.js';
 import { Sfx } from '../../core/sfx.js';
 import { StoryboardWall } from '../../core/storyboard.js';
 import { buildSet, type Light, LIGHTS, paintTexture, PRESETS, SET_IDS, type SetId, type SetSpec } from './sets.js';
@@ -50,6 +52,14 @@ const ADDED_KEY = 'shotboard-added-v1';
 const PROP_SIZE = 0.06;
 
 const SET_KEY = 'shotboard-set-v1';
+const BUTTONS: [id: string, icon: string, label: string][] = [
+  ['scene', 'scene', 'Scene'],
+  ['light', 'sun', 'Light'],
+  ['snap', 'snap', 'Snap view'],
+  ['play', 'play', 'Play the storyboard'],
+  ['undo', 'undo', 'Undo last shot'],
+];
+const LIGHT_ICONS: Record<Light, string> = { day: 'sun', sunset: 'sunset', night: 'moon' };
 const LIGHT_KEY = 'shotboard-light-v1';
 const GLOW: Record<Light, number> = { day: 0.15, sunset: 0.7, night: 1.6 };
 
@@ -68,12 +78,11 @@ export class ShotBoardPrototype implements Prototype {
   readonly wallRoot = new Group();
 
   private ctx!: LabContext;
-  private panel!: CanvasPanel;
+  private readonly buttons = new Map<string, IconButton>();
   private board!: StoryboardWall;
   private props: Prop[] = [];
   private selected: Prop | null = null;
   private drag: { prop: Prop; hand: HandState; pose: HeldPose } | null = null;
-  private status = '';
   private readonly tmp = new Vector3();
   private set!: SetSpec;
   private light: Light = 'day';
@@ -88,13 +97,14 @@ export class ShotBoardPrototype implements Prototype {
     this.ctx = ctx;
     this.buildStage();
 
-    this.panel = new CanvasPanel({ width: 0.36, height: 0.17, columns: 3, buttonHeight: 0.032, accent: this.accent });
-    this.panel.mesh.name = 'ShotPanel';
-    // Off to the right of the stage, angled toward the user.
-    this.panel.mesh.position.set(STAGE_W / 2 + 0.13, 0.085, -0.02);
-    this.panel.mesh.rotation.set(-0.25, -0.5, 0, 'YXZ');
-    this.panel.onPress = (id) => this.onButton(id);
-    this.deskRoot.add(this.panel.mesh);
+    // Round desk buttons in a shallow arc in front of the stage.
+    BUTTONS.forEach(([id, icon, label], k) => {
+      const b = new IconButton({ id: `shot:${id}`, icon, label, accent: this.accent, radius: 0.016 });
+      b.group.position.set((k - (BUTTONS.length - 1) / 2) * 0.05, 0.001, STAGE_D / 2 + 0.035 + Math.abs(k - (BUTTONS.length - 1) / 2) * -0.008);
+      b.onPress = () => this.onButton(id);
+      this.buttons.set(id, b);
+      this.deskRoot.add(b.group);
+    });
 
     // The library shelf, to the left of the stage.
     this.shelf = new LibraryShelf(this.accent);
@@ -182,9 +192,6 @@ export class ShotBoardPrototype implements Prototype {
   }
 
   enter(): void {
-    this.status = this.ctx.immersive
-      ? 'Pinch both hands close together and pull apart to frame a shot.'
-      : 'Drag pieces on the stage, then Snap view to capture a shot.';
     this.board.layout();
     this.refresh();
   }
@@ -199,15 +206,16 @@ export class ShotBoardPrototype implements Prototype {
   }
 
   holding(): boolean {
-    return this.drag != null || this.board.dragging;
+    return this.drag != null || this.board.dragging || this.shelf.scrolling;
   }
 
   update(dt: number): void {
     if (this.ctx.library.version !== this.libraryVersion) this.refreshShelf();
-    this.panel.update(this.ctx.pointers, dt);
     this.board.update(dt);
     this.updateGestures();
     this.updateDrag();
+    // Scrolling the shelf: after pulls, so a grab on a thing pulls it out.
+    this.shelf.update(this.ctx.pointers, dt);
     this.refresh();
   }
 
@@ -293,7 +301,7 @@ export class ShotBoardPrototype implements Prototype {
   private updateDrag(): void {
     if (this.drag == null) {
       for (const hand of this.ctx.pointers) {
-        if (!hand.tracked || !hand.grabStarted || this.panel.contains(hand.holdPoint)) continue;
+        if (!hand.tracked || !hand.grabStarted) continue;
         const entry = this.shelf.pick(hand);
         if (entry) {
           this.pull(entry, hand);
@@ -360,8 +368,8 @@ export class ShotBoardPrototype implements Prototype {
     const cam = this.ctx.camera;
     const eye = cam.getWorldPosition(new Vector3());
     const target = eye.clone().add(cam.getWorldDirection(this.tmp));
-    const caption = this.ctx.capture(eye, target, 50);
-    this.status = `Shot ${this.ctx.album.shots.length} captured (${caption}).`;
+    this.ctx.capture(eye, target, 50);
+    this.refresh();
   }
 
   // ------------------------------------------------------------ UI
@@ -369,33 +377,31 @@ export class ShotBoardPrototype implements Prototype {
   private onButton(id: string): void {
     if (id === 'scene') {
       this.setScene(SET_IDS[(SET_IDS.indexOf(this.set.id) + 1) % SET_IDS.length]);
-      this.status = `Scene: ${this.set.title}.`;
+      this.ctx.toast(`Scene: ${this.set.title}.`);
     }
     if (id === 'light') {
       this.setLight(LIGHTS[(LIGHTS.indexOf(this.light) + 1) % LIGHTS.length]);
-      this.status = `Light: ${this.light}.`;
+      this.ctx.toast(`Light: ${this.light}.`);
     }
     if (id === 'snap') this.snapView();
     if (id === 'undo') this.ctx.album.removeLast();
     if (id === 'play') this.board.play();
   }
 
+  /** Buttons say what they will do next; Snap names the suggested shot. */
   private refresh(): void {
     const count = this.ctx.album.shots.length;
     const list = this.set.shotList;
-    const next = list[count % list.length];
-    this.panel.setText(
-      `Shot Board - ${this.set.title}, ${this.light} - ${count} shot${count === 1 ? '' : 's'}`,
-      '',
-      [`Next shot (${(count % list.length) + 1} of ${list.length}): ${next}`, this.status || (this.selected ? `Holding ${this.selected.name}: turn your wrist to turn it.` : 'Grab a piece (thumb + middle finger) to move it.')],
-    );
-    this.panel.setButtons([
-      { id: 'scene', label: `Scene: ${this.set.title}` },
-      { id: 'light', label: `Light: ${this.light}` },
-      { id: 'snap', label: 'Snap view', tone: 'primary' },
-      { id: 'play', label: this.board.playing >= 0 ? 'Playing' : 'Play', disabled: count === 0 },
-      { id: 'undo', label: 'Undo shot', disabled: count === 0 },
-    ]);
+    const scene = this.buttons.get('scene')!;
+    scene.label = `Scene: ${this.set.title} (press for the next set)`;
+    const light = this.buttons.get('light')!;
+    light.icon = LIGHT_ICONS[this.light];
+    light.label = `Light: ${this.light} (press to change)`;
+    this.buttons.get('snap')!.label = `Snap shot ${count + 1}: ${list[count % list.length]}`;
+    const play = this.buttons.get('play')!;
+    play.disabled = count === 0;
+    play.active = this.board.playing >= 0;
+    this.buttons.get('undo')!.disabled = count === 0;
   }
 
   // ------------------------------------------------------------ tests
@@ -418,11 +424,16 @@ export class ShotBoardPrototype implements Prototype {
   }
 
   debugActions = {
-    press: (id: string) => this.panel.press(id),
+    press: (id: string) => this.buttons.get(id)?.press(true),
     shelfWorld: (i: number) => {
       const v = this.shelf.slotWorld(i);
       return v ? { x: v.x, y: v.y, z: v.z } : null;
     },
+    trayWorld: (x: number, z: number) => {
+      const v = this.shelf.trayWorld(x, z);
+      return { x: v.x, y: v.y, z: v.z };
+    },
+    scrollShelf: (metres: number) => this.shelf.scrollTo(metres),
     stageWorld: (x: number, z: number) => {
       const v = this.deskRoot.localToWorld(new Vector3(x, 0.03, z));
       return { x: v.x, y: v.y, z: v.z };
