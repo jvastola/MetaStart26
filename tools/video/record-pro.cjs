@@ -32,7 +32,12 @@ fs.mkdirSync(path.join(OUT, 'frames'), { recursive: true });
   page.on('pageerror', (e) => errors.push(e.message));
   await page.addInitScript(() => {
     localStorage.setItem('lab-intro-done-v1', 'true');
-    window.__sfxLog = [];
+    // Stamp each sound with the frame being recorded: the page clock also runs in
+    // real time while frames are captured, so timestamps drift far past the cut.
+    window.__frame = -1;
+    const log = [];
+    log.push = (...items) => Array.prototype.push.apply(log, items.map((e) => ({ ...e, f: window.__frame })));
+    window.__sfxLog = log;
   });
   await page.clock.install({ time: new Date('2026-11-03T10:00:00') });
   const app = SCENE === 'open' || SCENE === 'home' ? 'hub' : SCENE;
@@ -59,6 +64,7 @@ fs.mkdirSync(path.join(OUT, 'frames'), { recursive: true });
   let startTime = 0;
   const frame = async () => {
     const before = count;
+    if (recording) await page.evaluate((n) => { window.__frame = n; }, frameNo);
     await page.clock.fastForward(STEP);
     if (!recording) return;
     const t0 = Date.now();
@@ -233,6 +239,7 @@ fs.mkdirSync(path.join(OUT, 'frames'), { recursive: true });
   await settle(0.4);
   startTime = await page.evaluate(() => Date.now());
   recording = true;
+  await page.evaluate(() => { window.__frame = 0; });
 
   const deskCam = async (x, y, z) => desk(x, y, z);
 
@@ -462,7 +469,7 @@ fs.mkdirSync(path.join(OUT, 'frames'), { recursive: true });
   recording = false;
   const rawSfx = await page.evaluate(() => window.__sfxLog);
   fs.writeFileSync(path.join(OUT, 'sfx-raw.json'), JSON.stringify({ startTime, step: STEP, frameNo, raw: rawSfx }));
-  const sfx = rawSfx.map((e) => ({ name: e.name, arg: e.arg, frame: Math.round((e.t - startTime) / STEP) })).filter((e) => e.frame >= 0 && e.frame < frameNo);
+  const sfx = rawSfx.map((e) => ({ name: e.name, arg: e.arg, frame: e.f })).filter((e) => e.frame >= 0 && e.frame < frameNo);
   fs.writeFileSync(path.join(OUT, 'timeline.json'), JSON.stringify({ scene: SCENE, fps: FPS, frames: frameNo, captions, sfx, errors }, null, 1));
   console.log(JSON.stringify({ scene: SCENE, frames: frameNo, seconds: +(frameNo / FPS).toFixed(1), captions: captions.length, sfx: sfx.length, errors }));
   await browser.close();

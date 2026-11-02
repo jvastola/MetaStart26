@@ -65,7 +65,8 @@ fs.mkdirSync(OUT, { recursive: true });
   };
   const restHands = async () => {
     await pin('right', await desk(0.26, 0.06, 0.2), reach('right'));
-    await pin('left', await desk(-0.26, 0.06, 0.2), reach('left'));
+    // Left hand low and off to the side, out of frame.
+    await pin('left', await desk(-0.5, -0.25, 0.45), reach('left'));
     await wait(400);
   };
 
