@@ -44,6 +44,7 @@ export const ACCENTS = {
   golf: '#8fd1ff',
   sketch: '#ff9ad5',
   blocks: '#ffd36e',
+  kanban: '#8fb3ff',
   intro: '#9fc7ff',
 } as const;
 

@@ -48,6 +48,7 @@ import { findDesk, findWall, type SurfacePose, surfaceBelow } from './core/surfa
 import { ClayPrototype } from './protos/clay/clay.js';
 import { ConjurePrototype } from './protos/conjure/conjure.js';
 import { BlocksPrototype } from './protos/blocks/blocks.js';
+import { KanbanPrototype } from './protos/kanban/kanban.js';
 import { FocusPrototype } from './protos/focus/focus.js';
 import { GolfPrototype } from './protos/golf/golf.js';
 import { HubPrototype } from './protos/hub.js';
@@ -225,6 +226,7 @@ export class LabSystem extends createSystem({
       new SketchPrototype(),
       new GolfPrototype(),
       new BlocksPrototype(),
+      new KanbanPrototype(),
       new IntroPrototype(() => this.go('hub')),
     ];
     for (const p of this.protos) {
