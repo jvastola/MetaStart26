@@ -13,6 +13,10 @@
  * at that height. Right-drag (or Shift-drag) turns the plate.
  *
  * A ghost cube shows where the next block goes. Everything autosaves.
+ *
+ * Print drops a half-size copy beside the plate. It is a desk object like a
+ * Clay print: grab it to move it, both hands to resize, tap it for pin,
+ * size and delete, and it stays on the desk in every app.
  */
 
 import {
@@ -29,6 +33,7 @@ import {
   MeshStandardMaterial,
   CanvasTexture,
   PlaneGeometry,
+  Quaternion,
   SRGBColorSpace,
   Vector3,
 } from '@iwsdk/core';
@@ -65,8 +70,12 @@ const BUTTONS: [id: string, icon: string, label: string][] = [
   ['mirror', 'mirror', 'Mirror'],
   ['size', 'size', 'Size (hold to slide)'],
   ['undo', 'undo', 'Undo'],
+  ['print', 'print', 'Print a copy'],
   ['clear', 'trash', 'Clear'],
 ];
+
+/** A print is half the size of the build on the plate. */
+const PRINT_SCALE = 0.5;
 
 /** A small cottage for a first visit, so the plate is not empty. */
 function starter(grid: VoxelGrid): void {
@@ -97,6 +106,7 @@ export class BlocksPrototype implements Prototype {
     'Pinch (thumb + index) where you want a block; move while pinching for a row.',
     'Round buttons: build, erase, paint, colour, mirror, size, undo.',
     'Grab (thumb + middle) over the plate to turn it; both hands to resize.',
+    'Print makes a copy beside the plate: grab it, pin it, resize it.',
   ];
   readonly deskRoot = new Group();
   readonly wallRoot = new Group();
@@ -551,6 +561,7 @@ export class BlocksPrototype implements Prototype {
     set('mirror', this.mirror);
     set('size', false);
     set('undo', false, this.history.length === 0);
+    set('print', false, this.grid.count === 0);
     set('clear', false, this.grid.count === 0);
   }
 
@@ -560,6 +571,7 @@ export class BlocksPrototype implements Prototype {
     if (id === 'mirror') this.mirror = !this.mirror;
     if (id === 'size') this.setScale(Math.abs(this.stage.scale.x - 1) < 0.05 ? 1.6 : 1);
     if (id === 'undo') this.undo();
+    if (id === 'print') this.print();
     if (id === 'clear' && this.grid.count) {
       this.record(this.grid.clear());
       this.dirty = true;
@@ -567,6 +579,21 @@ export class BlocksPrototype implements Prototype {
     }
     this.refresh();
   }
+
+  /** Put a half-size copy of the build on the desk, to the right of the plate. */
+  private print(): void {
+    if (!this.grid.count) return;
+    this.deskRoot.updateWorldMatrix(true, false);
+    this.stage.updateWorldMatrix(true, false);
+    // Each new print steps forward a little, so they do not land on each other.
+    const slot = this.printed++ % 4;
+    const at = this.deskRoot.localToWorld(new Vector3(0.3, 0.009, -0.1 + slot * 0.07));
+    const quat = this.stage.getWorldQuaternion(new Quaternion());
+    const vox = VOX * this.stage.scale.x * PRINT_SCALE * this.deskRoot.getWorldScale(this.tmp).x;
+    this.ctx.deskObjects.addVoxels(this.grid.toJSON(), vox, at, quat);
+  }
+
+  private printed = 0;
 
   private save(): void {
     store.set(SAVE_KEY, this.grid.toJSON());

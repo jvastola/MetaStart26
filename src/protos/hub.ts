@@ -12,8 +12,6 @@ import type { HandState } from '../core/hands.js';
 import { CanvasPanel, roundRect } from '../core/panel.js';
 import { Sfx } from '../core/sfx.js';
 
-/** The app shown as the big tile on Home. */
-const FEATURED = 'blocks';
 const TILE_W = 0.1;
 const TILE_H = 0.118;
 const POKE_DEPTH = 0.004;
@@ -23,8 +21,6 @@ interface TileSpec {
   label: string;
   sub: string;
   accent: string;
-  /** The main app: a bigger tile with a "Start here" badge. */
-  featured?: boolean;
 }
 
 /** Simple vector icons, drawn into a square of size `s` at the origin. */
@@ -201,17 +197,6 @@ class AppTile {
     c.textAlign = 'center';
     c.textBaseline = 'top';
     c.fillText(spec.label, s / 2, s + 4, s - 20);
-    if (spec.featured) {
-      c.font = '700 34px system-ui, sans-serif';
-      const text = 'START HERE';
-      const w = c.measureText(text).width + 36;
-      roundRect(c, (s - w) / 2, 30, w, 50, 25);
-      c.fillStyle = 'rgba(20,22,27,0.85)';
-      c.fill();
-      c.fillStyle = '#ffffff';
-      c.textBaseline = 'middle';
-      c.fillText(text, s / 2, 57);
-    }
     const texture = new CanvasTexture(canvas);
     texture.colorSpace = SRGBColorSpace;
     texture.anisotropy = 4;
@@ -299,28 +284,26 @@ export class HubPrototype implements Prototype {
     this.ctx = ctx;
     this.header = new CanvasPanel({ width: 0.44, height: 0.055, columns: 1, accent: this.accent });
     this.header.mesh.name = 'HomeHeader';
-    this.header.mesh.position.set(0, 0.375, -0.15);
+    this.header.mesh.position.set(0, 0.33, -0.15);
     this.header.mesh.rotation.x = -0.18;
     this.deskRoot.add(this.header.mesh);
 
-    // Blocks leads: one big tile on top, the other apps below.
-    const apps = this.entries().map((p) => ({ id: p.id, label: p.title, sub: p.tagline, accent: p.accent }));
-    const featured = apps.filter((a) => a.id === FEATURED).map((a) => ({ ...a, featured: true }));
-    const rest: TileSpec[] = [...apps.filter((a) => a.id !== FEATURED), { id: 'intro', label: 'Tutorial', sub: 'Learn the hand moves', accent: ACCENTS.intro }];
-    const rows: [TileSpec[], number, number][] = [
-      [featured, 0.24, 1.45],
-      [rest, 0.088, 0.82],
+    // Every app the same size: two rows in a gentle arc, four on top.
+    const specs: TileSpec[] = [
+      ...this.entries().map((p) => ({ id: p.id, label: p.title, sub: p.tagline, accent: p.accent })),
+      { id: 'intro', label: 'Tutorial', sub: 'Learn the hand moves', accent: ACCENTS.intro },
     ];
-    for (const [row, y, size] of rows) {
+    const rows = [specs.slice(0, 4), specs.slice(4)];
+    rows.forEach((row, r) => {
       row.forEach((spec, i) => {
         const tile = new AppTile(spec);
-        const x = (i - (row.length - 1) / 2) * (TILE_W * size + 0.018);
+        const x = (i - (row.length - 1) / 2) * (TILE_W + 0.025);
         const z = -0.13 + Math.abs(x) * 0.25;
-        tile.place(x, y, z, -x * 1.2, size);
+        tile.place(x, 0.235 - r * (TILE_H + 0.02), z, -x * 1.2);
         this.deskRoot.add(tile.mesh);
         this.tiles.push(tile);
       });
-    }
+    });
   }
 
   enter(): void {
@@ -359,7 +342,7 @@ export class HubPrototype implements Prototype {
   }
 
   debugState(): unknown {
-    return { buttons: this.tiles.map((t) => t.spec.id), hover: this.tiles.filter((t) => t.hover).map((t) => t.spec.id) };
+    return { buttons: this.tiles.map((t) => t.spec.id), hover: this.tiles.filter((t) => t.hover).map((t) => t.spec.id), sizes: this.tiles.map((t) => +t.mesh.scale.x.toFixed(2)) };
   }
 
   debugActions = {

@@ -18,7 +18,7 @@ division.
 | 4 | **Clay** | Productivity / creative | Sculpt with your bare fingertips on a turntable. Tools are round icon buttons in an arc on the desk (sculpt, smooth, inflate, mirror, auto spin, colour, undo, reset, print, clear prints, export); sliders for size (0.5x to 5x) and brush size, or grab the turntable base and raise or lower your hand to resize. **Print copy** builds a solid copy you can pick up; the pin in front of a print moves it onto the desk, where it stays in every app and next session. |
 | 5 | **Sketch** | Productivity / creative | Pinch to draw in the air with either hand or both; grab a stroke to move it, both hands to scale. Loop around strokes to select several and move, scale, duplicate, paint or delete them together. Icon buttons for colour, brush size, erase, select, undo, clear. |
 | 6 | **Desk Links** | Gaming (reference) | Fingertip mini golf on your desk: a daily 9-hole course that gets harder as you go, with eight kinds of hole (The Gate, Posts, The Funnel, S-Bend, Bank Shots, The Cove, Pinball, Switchbacks). **Skip** picks up and scores par + 2. |
-| 7 | **Blocks** | Productivity / creative | Build with voxel blocks on a 16 x 16 plate: pinch where you want a block, keep pinching to lay a row or a wall, blocks can float. Round buttons for build, erase, paint, colour, mirror, size (hold to slide), undo and clear. Grab over the plate to turn it; both hands to resize. Starts with a small cottage; autosaves. On a desktop, click a face to build against it and drag to lay a row. |
+| 7 | **Blocks** | Productivity / creative | Build with voxel blocks on a 16 x 16 plate: pinch where you want a block, keep pinching to lay a row or a wall, blocks can float. Round buttons for build, erase, paint, colour, mirror, size (hold to slide), undo, print and clear. Grab over the plate to turn it; both hands to resize. Starts with a small cottage; autosaves. **Print** puts a half-size copy on the desk that you can move, resize and pin like any desk object. On a desktop, click a face to build against it and drag to lay a row. |
 
 ## Run it
 
@@ -78,8 +78,8 @@ there. AI generation needs the `api/gen3d.ts` proxy on Vercel.
    4. **select**: hold a grab in empty air and stretch a box over three cubes;
    5. turn your left palm toward you to open the menu;
    6. press the **Home** button on the desk's front-left corner.
-4. **Home** opens, with **Blocks** as the big **Start here** tile and the
-   other apps below it. Later visits open Home too. The first time you enter
+4. **Home** opens: every app as a tile, all the same size. Later visits open
+   Home too. The first time you enter
    each prototype, a **How to** card explains it in three lines. Bring it back
    any time with palm up, then **How to**.
 
@@ -138,19 +138,25 @@ of them, use two hands to scale them, drop them on the bin to delete them, or
 tap a grab on empty air to deselect.
 
 **Things that stay on the desk.** Anything you pin (clay prints, Sketch
-strokes, Conjure creations) and photo prints live on the desk itself, not in
+strokes, Conjure creations), Blocks prints and photo prints live on the desk itself, not in
 an app: they show everywhere, Home included, and are saved for next session.
 Nothing shows buttons until you want it to: **tap** a thing (a quick pinch on
-it, or a click) and a small pin and delete pair appears above it; tap again,
+it, or a click) and small pin, size and delete buttons appear above it; tap again,
 or anywhere else, and it goes. That works for desk objects, Clay prints and
 Conjure creations.
 - **Photo prints:** every shot you frame with both hands pops out a small
   photo print where you framed it. Storyboard cards can also be pulled off the
   board to make one. Grab a photo to move it.
 - **Pin:** on a Clay print or Conjure creation (or the selection menu, for
-  strokes and anything selected) it moves the thing onto the desk, locked in
-  place. On a desk object it locks or unlocks it; unlocked, grab it to move it
-  or drop it on the bin.
+  strokes and anything selected) it moves the thing onto the desk. On a desk
+  object it means **kept**: you can still grab it (thumb + middle) and move it,
+  but dropping it on the bin does not delete it (its delete button still
+  does). Unpinned things go in the bin.
+- **Resize:** grab a desk object with both hands and pull apart, or use its
+  **size** button: press for the next size, or hold and slide (pinned things
+  too).
+- **Blocks prints:** Blocks' **Print** button drops a half-size copy of the
+  build beside the plate, unpinned, ready to pick up.
 - **Storyboard cards:** grab one and drop it on another card's place to
   reorder the story.
 

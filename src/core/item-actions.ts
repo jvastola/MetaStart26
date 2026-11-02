@@ -6,7 +6,7 @@
  */
 
 import { Group, Matrix4, type Object3D, Quaternion, Vector3 } from '@iwsdk/core';
-import { IconButton } from './icon-button.js';
+import { type HoldSlider, IconButton } from './icon-button.js';
 
 const UP = new Vector3(0, 1, 0);
 
@@ -28,6 +28,8 @@ export class ItemActions {
   readonly group = new Group();
   readonly pin: IconButton;
   readonly remove: IconButton;
+  /** Optional middle button: press to step the size, hold and slide to set it. */
+  size: IconButton | null = null;
   target: Object3D | null = null;
   /** World point the buttons float above (top of the thing). */
   private top: () => Vector3 = () => new Vector3();
@@ -46,6 +48,18 @@ export class ItemActions {
     this.group.matrixAutoUpdate = false;
     this.group.visible = false;
     this.group.userData.hideInShots = true;
+  }
+
+  /** Add a size button between pin and delete. */
+  addSize(id: string, accent: string, hold: HoldSlider, onPress: () => void): IconButton {
+    const b = new IconButton({ id: `${id}:size`, icon: 'size', label: 'Size (hold and slide)', accent, radius: 0.012 });
+    b.hold = hold;
+    b.onPress = onPress;
+    this.pin.group.position.x = -0.032;
+    this.remove.group.position.x = 0.032;
+    this.group.add(b.group);
+    this.size = b;
+    return b;
   }
 
   show(target: Object3D, top: () => Vector3): void {

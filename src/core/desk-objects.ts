@@ -5,10 +5,13 @@
  * next session.
  *
  *   - Tap one (a quick pinch on it, or a click) to show its two buttons:
- *     pin (locked in place, or not) and delete. Tap again or elsewhere to
+ *     pin (kept, or not), size and delete. Tap again or elsewhere to
  *     hide them. Nothing else clutters the desk.
- *   - A pinned object stays exactly where it is and cannot be knocked.
- *     Unpinned, grab it (thumb + middle) to move it, or drop it on the bin.
+ *   - Grab any of them (thumb + middle) to move it, pinned or not; grab
+ *     with both hands and pull apart to resize it.
+ *   - Pinned means kept: dropping a pinned thing on the bin does not delete
+ *     it (its delete button still does). Unpinned things go in the bin.
+ *   - The middle button resizes: press for the next size, or hold and slide.
  *
  * The host owns one and updates it before the active app, so a pinch or
  * grab on a desk object never also reaches the app underneath.
@@ -19,8 +22,11 @@ import {
   BufferAttribute,
   BufferGeometry,
   CanvasTexture,
+  Color,
   Group,
+  InstancedMesh,
   type Material,
+  Matrix4,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
@@ -47,13 +53,15 @@ import type { TrashBin } from './trash.js';
 const SAVE_KEY = 'desk-objects-v1';
 /** Old per-app keys for pinned prints, read once and moved here. */
 const OLD_PIN_KEYS = ['clay-pinned-v1', 'studio-clay-pinned-v1'];
-const LIMITS: Record<Kind, number> = { photo: 16, print: 8, stroke: 40, model: 12 };
+const LIMITS: Record<Kind, number> = { photo: 16, print: 8, stroke: 40, model: 12, voxels: 8 };
+const MIN_SCALE = 0.25;
+const MAX_SCALE = 4;
 /** Clay sculptures are icospheres of this detail; their faces are rebuilt from it. */
 const CLAY_DETAIL = 22;
 /** A pinch released within this long is a tap. */
 const TAP = 0.4;
 
-export type Kind = 'print' | 'photo' | 'stroke' | 'model';
+export type Kind = 'print' | 'photo' | 'stroke' | 'model' | 'voxels';
 
 interface Saved {
   k: Kind;
@@ -74,6 +82,9 @@ interface Saved {
   /** Model: prompt and variation (colour in c if it was repainted). */
   pr?: string;
   va?: number;
+  /** Voxels: flat [x, y, z, colour, ...] cells, and the block size in metres. */
+  vx?: number[];
+  vs?: number;
 }
 
 export interface DeskObject {
@@ -146,6 +157,8 @@ export class DeskObjects {
   private readonly actions: ItemActions;
   private holds: { obj: DeskObject; hand: HandState; pose: HeldPose; time: number; from: Vector3 }[] = [];
   private taps: { obj: DeskObject; hand: HandState; time: number }[] = [];
+  /** Two hands on one object: pull apart to scale it. */
+  private twoHand: { obj: DeskObject; a: HandState; b: HandState; dist0: number; scale0: number } | null = null;
   private readonly tmp = new Vector3();
   /** Lets mouse drags slide on a plane through the object (set by the host). */
   mousePlane: ((point: Vector3) => void) | null = null;
@@ -169,12 +182,38 @@ export class DeskObjects {
         }
       },
     );
+    // Size: press for the next step, or hold and slide (works on pinned things too).
+    this.actions.addSize(
+      'desk',
+      '#ffc94d',
+      {
+        get: () => Math.log(this.selectedScale() / MIN_SCALE) / Math.log(MAX_SCALE / MIN_SCALE),
+        set: (v) => this.setScale(this.selected, MIN_SCALE * (MAX_SCALE / MIN_SCALE) ** v),
+        label: () => `Size ${this.selectedScale().toFixed(1)}x`,
+      },
+      () => {
+        const steps = [0.5, 1, 1.5, 2, 3];
+        const now = this.selectedScale();
+        this.setScale(this.selected, steps.find((x) => x > now + 0.05) ?? steps[0]);
+      },
+    );
     this.group.add(this.actions.group);
+  }
+
+  private selectedScale(): number {
+    return this.selected?.holder.scale.x ?? 1;
+  }
+
+  private setScale(obj: DeskObject | null, s: number): void {
+    if (!obj) return;
+    obj.pop = 1;
+    obj.holder.scale.setScalar(Math.min(MAX_SCALE, Math.max(MIN_SCALE, s)));
+    this.save();
   }
 
   // ------------------------------------------------------------ making
 
-  /** Add a made object at a world pose, pinned (locked) by default. */
+  /** Add a made object at a world pose, pinned (kept) by default. */
   private adopt(obj: DeskObject, worldPos: Vector3, worldQuat: Quaternion, worldScale: number, pinned = true): DeskObject {
     this.group.updateWorldMatrix(true, false);
     this.group.add(obj.holder);
@@ -200,6 +239,68 @@ export class DeskObjects {
   /** Pin a Sketch stroke: points are stroke-local (centred), as Sketch keeps them. */
   addStroke(points: Float32Array, color: string, radius: number, worldPos: Vector3, worldQuat: Quaternion, worldScale: number): DeskObject {
     return this.adopt(this.buildStroke(points, color, radius), worldPos, worldQuat, worldScale);
+  }
+
+  /**
+   * A printed copy of a Blocks build: `cells` is flat [x, y, z, colour, ...],
+   * `vox` the block size. It pops up unpinned, so it can be picked up at once.
+   */
+  addVoxels(cells: number[], vox: number, worldPos: Vector3, worldQuat: Quaternion): DeskObject | null {
+    if (cells.length < 4) return null;
+    const obj = this.adopt(this.buildVoxels(cells, vox), worldPos, worldQuat, this.group.getWorldScale(this.tmp).x, false);
+    obj.pop = 0;
+    Sfx.whoosh(worldPos);
+    return obj;
+  }
+
+  private buildVoxels(cells: number[], vox: number): DeskObject {
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    let maxY = 0;
+    for (let i = 0; i + 3 < cells.length; i += 4) {
+      minX = Math.min(minX, cells[i]);
+      maxX = Math.max(maxX, cells[i]);
+      maxY = Math.max(maxY, cells[i + 1]);
+      minZ = Math.min(minZ, cells[i + 2]);
+      maxZ = Math.max(maxZ, cells[i + 2]);
+    }
+    const n = cells.length / 4;
+    const geometry = new BoxGeometry(vox * 0.97, vox * 0.97, vox * 0.97);
+    const material = new MeshStandardMaterial({ roughness: 0.65 });
+    const mesh = new InstancedMesh(geometry, material, n);
+    const m = new Matrix4();
+    const color = new Color();
+    // Centred on x and z, standing on its lowest layer.
+    const cx = (minX + maxX + 1) / 2;
+    const cz = (minZ + maxZ + 1) / 2;
+    for (let i = 0; i < n; i++) {
+      const [x, y, z, c] = cells.slice(i * 4, i * 4 + 4);
+      m.makeTranslation((x + 0.5 - cx) * vox, (y + 0.5) * vox, (z + 0.5 - cz) * vox);
+      mesh.setMatrixAt(i, m);
+      mesh.setColorAt(i, color.setHex(c));
+    }
+    mesh.frustumCulled = false;
+    const width = Math.max(maxX - minX + 1, maxZ - minZ + 1) * vox;
+    const height = (maxY + 1) * vox;
+    const holder = new Group();
+    holder.add(mesh, blobShadow(width * 1.3));
+    return {
+      kind: 'voxels',
+      holder,
+      pinned: false,
+      reach: Math.max(0.04, Math.max(width, height) * 0.6),
+      center: (out) => holder.localToWorld(out.set(0, height / 2, 0)),
+      top: (out) => holder.localToWorld(out.set(0, height, 0)),
+      data: { vx: cells, vs: vox },
+      dispose: () => {
+        geometry.dispose();
+        material.dispose();
+        mesh.dispose();
+      },
+      pop: 1,
+    };
   }
 
   /** Pin a Conjure creation (rebuilt from its prompt; AI-made models pin as their offline sketch). */
@@ -390,7 +491,7 @@ export class DeskObjects {
     const obj = this.selected;
     if (!obj) return;
     this.actions.pin.active = obj.pinned;
-    this.actions.pin.label = obj.pinned ? 'Pinned in place (press to unpin and move)' : 'Not pinned: grab to move (press to pin)';
+    this.actions.pin.label = obj.pinned ? 'Pinned: kept, the bin will not take it (press to unpin)' : 'Not pinned: the bin can take it (press to pin)';
   }
 
   // ------------------------------------------------------------ hands
@@ -426,9 +527,17 @@ export class DeskObjects {
     if (!this.group.visible) return;
     for (const hand of pointers) {
       if (!hand.tracked) continue;
-      // Grab: pick up an unpinned object.
+      // Grab: pick up an unpinned object; a second hand on a held one resizes it.
       if (hand.grabStarted && !this.owns(hand)) {
-        const obj = this.nearest(hand, true, 'grab');
+        const obj = this.nearest(hand, false, 'grab');
+        const other = obj ? this.holds.find((h) => h.obj === obj && h.hand !== hand) : undefined;
+        if (obj && other && !hand.isMouse && !this.twoHand) {
+          this.twoHand = { obj, a: other.hand, b: hand, dist0: Math.max(0.06, other.hand.holdPoint.distanceTo(hand.holdPoint)), scale0: obj.holder.scale.x };
+          this.holds.push({ obj, hand, pose: new HeldPose(), time: TAP, from: obj.holder.getWorldPosition(new Vector3()) });
+          hand.clearEdges();
+          Sfx.pinch(hand.holdPoint);
+          continue;
+        }
         if (obj) {
           if (hand.isMouse && this.mousePlane) {
             const at = obj.holder.getWorldPosition(new Vector3());
@@ -460,17 +569,30 @@ export class DeskObjects {
       this.taps.splice(i, 1);
       if (t.time < TAP) this.select(this.selected === t.obj ? null : t.obj);
     }
+    // Two hands on one thing: the distance between them sets its size.
+    const t = this.twoHand;
+    if (t) {
+      const both = [t.a, t.b].every((x) => x.grabbing && x.tracked);
+      if (both) this.setScale(t.obj, (t.scale0 * t.a.holdPoint.distanceTo(t.b.holdPoint)) / t.dist0);
+      else {
+        // One let go: the other carries on holding from here.
+        this.twoHand = null;
+        for (const h of this.holds) if (h.obj === t.obj && h.hand.grabbing) h.pose.begin(h.hand, h.obj.holder);
+      }
+    }
     // Carrying.
     for (let i = this.holds.length - 1; i >= 0; i -= 1) {
       const h = this.holds[i];
       if (h.hand.grabbing && h.hand.tracked) {
+        if (this.twoHand?.obj === h.obj) continue;
         h.pose.apply(h.hand, h.obj.holder);
-        this.trash.near(h.hand.holdPoint);
+        if (!h.obj.pinned) this.trash.near(h.hand.holdPoint);
         continue;
       }
       this.holds.splice(i, 1);
       if (h.hand.isMouse) this.mouseRelease?.();
-      if (this.trash.take(h.hand.holdPoint)) {
+      // Pinned things are kept: the bin does not take them.
+      if (!h.obj.pinned && this.trash.take(h.hand.holdPoint)) {
         this.remove(h.obj);
         continue;
       }
@@ -510,6 +632,7 @@ export class DeskObjects {
         if (s.k === 'print' && s.v && s.m && s.c) obj = this.buildPrint(fromBase64(s.v), s.c, s.m, s.h ?? 0.1);
         else if (s.k === 'stroke' && s.p && s.c) obj = this.buildStroke(fromBase64(s.p), s.c, s.r ?? 0.005);
         else if (s.k === 'model' && s.pr) obj = this.buildModel(s.pr, s.va ?? 0, s.c ?? null);
+        else if (s.k === 'voxels' && s.vx && s.vs) obj = this.buildVoxels(s.vx, s.vs);
         else if (s.k === 'photo' && s.img) {
           const photo = this.buildPhoto(document.createElement('canvas'), s.w ?? 0.12, s.img);
           const image = new Image();
@@ -545,7 +668,7 @@ export class DeskObjects {
     this.objects.push(obj);
   }
 
-  debug(): { kind: Kind; pinned: boolean; pos: number[]; selected: boolean }[] {
-    return this.objects.map((o) => ({ kind: o.kind, pinned: o.pinned, pos: o.holder.position.toArray().map((v) => +v.toFixed(3)), selected: o === this.selected }));
+  debug(): { kind: Kind; pinned: boolean; pos: number[]; selected: boolean; scale: number }[] {
+    return this.objects.map((o) => ({ kind: o.kind, pinned: o.pinned, pos: o.holder.position.toArray().map((v) => +v.toFixed(3)), selected: o === this.selected, scale: +o.holder.scale.x.toFixed(2) }));
   }
 }
